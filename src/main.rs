@@ -21,9 +21,10 @@ fn main() {
         .expect("Unexpected error in running the application");
 }
 
+type CsvGrid = Vec<Vec<String>>;
 struct CharterCsv {
     screen: Screen,
-    csv_files: Vec<(String, String)>,
+    csv_files: Vec<(String, CsvGrid)>,
     graph_data: Option<String>,
 }
 
@@ -31,7 +32,12 @@ impl Default for CharterCsv {
     fn default() -> Self {
         Self {
             screen: Screen::Main,
-            csv_files: vec![("test.csv".to_string(), "Some val, Some val, Some, val..".to_string())],
+            csv_files: vec![(
+                "product_sheet.csv".to_string(),
+                vec![
+                    vec!["id".to_string(), "product_name".to_string(), "qty".to_string(), "price".to_string()]
+                ]
+            )],
             graph_data: None,
         }
     }
@@ -40,8 +46,8 @@ impl Default for CharterCsv {
 enum Screen {
     Main,
     ViewCsv,
-    CreateCsv { content: (String, String) },
-    EditCsv { index: usize, content: (String, String) },
+    CreateCsv { content: (String, CsvGrid) },
+    EditCsv { index: usize, content: (String, CsvGrid) },
     ViewGraph { csv_file: String },
 }
 
@@ -96,7 +102,14 @@ impl CharterCsv {
                     if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
                         let path_as_string = path.to_str().unwrap().to_string();
                         if let Ok(content) = std::fs::read_to_string(&path) {
-                            self.csv_files.push((path_as_string, content));
+                            // Convert the content to grid immediately
+                            let grid: CsvGrid = content
+                                .lines()
+                                .map(|line| line.split(',')
+                                    .map(|s| s.trim().to_string())
+                                    .collect())
+                                .collect();
+                            self.csv_files.push((path_as_string, grid));
                         }
                     }
                 }
@@ -107,7 +120,10 @@ impl CharterCsv {
 
                 if ui.add_sized(menu_btn_size, egui::Button::new("Create New CSV File")).clicked() {
                     self.screen = Screen::CreateCsv {
-                        content: ("/files".to_string(), String::new()),
+                        content: (
+                            "/files".to_string(),
+                            vec![vec!["".to_string()]],
+                        ),
                     };
                 }
 
@@ -142,16 +158,15 @@ impl CharterCsv {
         });
     }
 
-    fn show_csv_editor(&mut self, ctx: &egui::Context, content: &mut (String, String), edit_index: Option<usize>) -> Option<Screen> {
+    fn show_csv_editor(&mut self, ctx: &egui::Context, content: &mut (String, CsvGrid), edit_index: Option<usize>, ) -> Option<Screen> {
         let mut next_screen = None;
-
         CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Save").clicked() {
                     if let Some(index) = edit_index {
                         self.csv_files[index] = content.clone();
                     } else {
-                        self.csv_files.push(("filename".to_string(), "contents".to_string()));
+                        self.csv_files.push(content.clone());
                     }
                     next_screen = Some(Screen::Main);
                 }
@@ -162,16 +177,14 @@ impl CharterCsv {
             });
 
             ScrollArea::both().show(ui, |ui| {
-                let rows: Vec<Vec<String>> = content
-                    .1
-                    .lines()
-                    .map(|line| line.split(',').map(String::from).collect())
-                    .collect();
-                for row in rows {
+                let grid = &mut content.1;
+                for row in grid.iter_mut() {
                     ui.horizontal(|ui| {
-                        for cell in row {
-                            let mut cell_content = cell.clone();
-                            ui.add_sized(Vec2::new(300.0, 0.0), egui::TextEdit::singleline(&mut cell_content));
+                        for cell in row.iter_mut() {
+                            ui.add_sized(
+                                Vec2::new(300.0, 0.0),
+                                egui::TextEdit::singleline(cell)
+                            );
                         }
                     });
                 }
