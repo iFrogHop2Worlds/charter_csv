@@ -1,0 +1,9 @@
+[package]
+name = "CharterCsv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+egui = "0.31.0"
+eframe = "0.31.0"
+rfd = "0.15.2"
