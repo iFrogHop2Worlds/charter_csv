@@ -171,6 +171,16 @@ impl CharterCsv {
                     next_screen = Some(Screen::Main);
                 }
 
+                if ui.button("Add Row").clicked() {
+                    content.1.push(vec!["".to_string(); content.1.get(0).map_or(0, |row| row.len())]);
+                }
+
+                if ui.button("Add Column").clicked() {
+                    for row in &mut content.1 {
+                        row.push("".to_string());
+                    }
+                }
+
                 if ui.button("Back").clicked() {
                     next_screen = Some(Screen::Main);
                 }
