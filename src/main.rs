@@ -158,7 +158,7 @@ impl CharterCsv {
         });
     }
 
-    fn show_csv_editor(&mut self, ctx: &egui::Context, content: &mut (String, CsvGrid), edit_index: Option<usize>, ) -> Option<Screen> {
+    fn show_csv_editor(&mut self, ctx: &egui::Context, content: &mut (String, CsvGrid), edit_index: Option<usize>) -> Option<Screen> {
         let mut next_screen = None;
         CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -186,19 +186,57 @@ impl CharterCsv {
                 }
             });
 
-            ScrollArea::both().show(ui, |ui| {
-                let grid = &mut content.1;
-                for row in grid.iter_mut() {
-                    ui.horizontal(|ui| {
-                        for cell in row.iter_mut() {
-                            ui.add_sized(
-                                Vec2::new(300.0, 0.0),
-                                egui::TextEdit::singleline(cell)
-                            );
-                        }
-                    });
-                }
-            });
+            ScrollArea::both()
+                .auto_shrink([false; 2])
+                .show_viewport(ui, |ui, viewport| {
+                    let grid = &mut content.1;
+                    if grid.is_empty() {
+                        return;
+                    }
+
+                    const ROW_HEIGHT: f32 = 30.0;
+                    const CELL_WIDTH: f32 = 300.0;
+
+                    let total_width = grid[0].len() as f32 * CELL_WIDTH;
+                    let total_height = grid.len() as f32 * ROW_HEIGHT;
+
+                    ui.set_min_size(Vec2::new(total_width, total_height));
+
+                    let start_row = (viewport.min.y / ROW_HEIGHT).floor().max(0.0) as usize;
+                    let visible_rows = (viewport.height() / ROW_HEIGHT).ceil() as usize + 1;
+                    let end_row = (start_row + visible_rows).min(grid.len());
+
+                    let start_col = (viewport.min.x / CELL_WIDTH).floor().max(0.0) as usize;
+                    let visible_cols = (viewport.width() / CELL_WIDTH).ceil() as usize + 1;
+                    let end_col = (start_col + visible_cols).min(grid[0].len());
+
+                    let top_offset = start_row as f32 * ROW_HEIGHT;
+                    ui.add_space(top_offset);
+
+                    for row_idx in start_row..end_row {
+                        let row = &mut grid[row_idx];
+                        ui.horizontal(|ui| {
+                            if start_col > 0 {
+                                ui.add_space(start_col as f32 * CELL_WIDTH);
+                            }
+
+                            for col_idx in start_col..end_col {
+                                if col_idx < row.len() {
+                                    let cell = &mut row[col_idx];
+                                    ui.add_sized(
+                                        Vec2::new(CELL_WIDTH, ROW_HEIGHT),
+                                        egui::TextEdit::singleline(cell)
+                                    );
+                                }
+                            }
+                        });
+                    }
+
+                    let bottom_space = total_height - (end_row as f32 * ROW_HEIGHT);
+                    if bottom_space > 0.0 {
+                        ui.add_space(bottom_space);
+                    }
+                });
         });
 
         next_screen
