@@ -22,6 +22,7 @@ fn main() {
 }
 
 type CsvGrid = Vec<Vec<String>>;
+type ChartGrid = Vec<Vec<(String, f32)>>;
 struct CharterCsv {
     screen: Screen,
     csv_files: Vec<(String, CsvGrid)>,
@@ -48,7 +49,8 @@ enum Screen {
     ViewCsv,
     CreateCsv { content: (String, CsvGrid) },
     EditCsv { index: usize, content: (String, CsvGrid) },
-    ViewGraph { csv_file: String },
+    CreateChart { csv_file: String },
+    ViewChart { chart: ChartGrid },
 }
 
 impl App for CharterCsv {
@@ -82,9 +84,15 @@ impl App for CharterCsv {
                     },
                 };
             }
-            Screen::ViewGraph { ref csv_file } => {
-                self.screen = Screen::Main;
-                self.show_graph_screen(ctx, &csv_file)
+            Screen::CreateChart { ref csv_file } => {
+                let copy = csv_file.clone();
+                self.screen = screen;
+                self.create_chart_screen(ctx, &copy)
+            }
+            Screen::ViewChart { .. } => {
+                self.screen = screen;
+                self.show_main_screen(ctx, _frame)
+                //self.show_chart_screen(ctx, &ChartGrid::default())
             }
         }
     }
@@ -98,7 +106,7 @@ impl CharterCsv {
                 ui.label("Create charts from CSV files for analysis");
                 ui.add_space(20.0);
                 let menu_btn_size = egui::Vec2::new(300.0, 30.0);
-                if ui.add_sized(menu_btn_size, egui::Button::new("Upload CSV File")).clicked() {
+                if ui.add_sized(menu_btn_size, egui::Button::new("load CSV Files")).clicked() {
                     if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
                         let path_as_string = path.to_str().unwrap().to_string();
                         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -121,10 +129,18 @@ impl CharterCsv {
                 if ui.add_sized(menu_btn_size, egui::Button::new("Create New CSV File")).clicked() {
                     self.screen = Screen::CreateCsv {
                         content: (
-                            "/files".to_string(),
+                            "/todo/setpath".to_string(),
                             vec![vec!["".to_string()]],
                         ),
                     };
+                }
+
+                if ui.add_sized(menu_btn_size, egui::Button::new("Create Chart")).clicked() {
+                    self.screen = Screen::ViewCsv;
+                }
+
+                if ui.add_sized(menu_btn_size, egui::Button::new("View All Charts")).clicked() {
+                    self.screen = Screen::ViewCsv;
                 }
 
                 if ui.add_sized(menu_btn_size, egui::Button::new("Close Program")).clicked() {
@@ -135,27 +151,40 @@ impl CharterCsv {
     }
 
     fn show_csv_list(&mut self, ctx: &egui::Context) {
+        let mut files_to_remove: Option<usize> = None;
+        let mut next_screen: Option<Screen> = None;
+
         CentralPanel::default().show(ctx, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
                 for (index, file) in self.csv_files.iter().enumerate() {
                     let file_name = file.0.split("\\").last().unwrap_or("No file name");
                     ui.horizontal(|ui| {
-                        if ui.button("Edit").clicked() {
-                            self.screen = Screen::EditCsv {
+                        ui.label(file_name);
+                        if ui.button("edit").clicked() {
+                            next_screen = Some(Screen::EditCsv {
                                 index,
                                 content: file.clone(),
-                            };
+                            });
                         }
-
-                        ui.label(file_name);
+                        if ui.button("delete").clicked() {
+                            files_to_remove = Some(index);
+                        }
                     });
                 }
             });
 
             if ui.button("Back").clicked() {
-                self.screen = Screen::Main;
+                next_screen = Some(Screen::Main);
             }
         });
+
+        // Handle state changes after the UI
+        if let Some(index) = files_to_remove {
+            self.csv_files.remove(index);
+        }
+        if let Some(screen) = next_screen {
+            self.screen = screen;
+        }
     }
 
     fn show_csv_editor(&mut self, ctx: &egui::Context, content: &mut (String, CsvGrid), edit_index: Option<usize>) -> Option<Screen> {
@@ -168,7 +197,20 @@ impl CharterCsv {
                     } else {
                         self.csv_files.push(content.clone());
                     }
-                    next_screen = Some(Screen::Main);
+
+                    if let Some(path) = rfd::FileDialog::new().add_filter(&content.0, &["csv"]).save_file() {
+                        let csv_content = grid2csv(&content.1);
+                        std::fs::write(path, csv_content).expect("Failed to save the file");
+                    }
+
+                    next_screen = Some(Screen::ViewCsv);
+                }
+
+                fn grid2csv(grid: &CsvGrid) -> String {
+                    grid.iter()
+                        .map(|row| row.join(","))
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 }
 
                 if ui.button("Add Row").clicked() {
@@ -197,11 +239,14 @@ impl CharterCsv {
                     const ROW_HEIGHT: f32 = 30.0;
                     const CELL_WIDTH: f32 = 300.0;
 
+                    // Calculate total size
                     let total_width = grid[0].len() as f32 * CELL_WIDTH;
                     let total_height = grid.len() as f32 * ROW_HEIGHT;
 
+                    // Set the total size for proper scrolling
                     ui.set_min_size(Vec2::new(total_width, total_height));
 
+                    // Calculate visible range based on viewport
                     let start_row = (viewport.min.y / ROW_HEIGHT).floor().max(0.0) as usize;
                     let visible_rows = (viewport.height() / ROW_HEIGHT).ceil() as usize + 1;
                     let end_row = (start_row + visible_rows).min(grid.len());
@@ -210,16 +255,20 @@ impl CharterCsv {
                     let visible_cols = (viewport.width() / CELL_WIDTH).ceil() as usize + 1;
                     let end_col = (start_col + visible_cols).min(grid[0].len());
 
+                    // Calculate the offset for positioning
                     let top_offset = start_row as f32 * ROW_HEIGHT;
                     ui.add_space(top_offset);
 
+                    // Only render valid rows
                     for row_idx in start_row..end_row {
                         let row = &mut grid[row_idx];
                         ui.horizontal(|ui| {
+                            // Add spacing for non-visible columns before
                             if start_col > 0 {
                                 ui.add_space(start_col as f32 * CELL_WIDTH);
                             }
 
+                            // Render visible cells
                             for col_idx in start_col..end_col {
                                 if col_idx < row.len() {
                                     let cell = &mut row[col_idx];
@@ -232,6 +281,7 @@ impl CharterCsv {
                         });
                     }
 
+                    // Add space at the bottom to maintain scroll position
                     let bottom_space = total_height - (end_row as f32 * ROW_HEIGHT);
                     if bottom_space > 0.0 {
                         ui.add_space(bottom_space);
@@ -242,7 +292,7 @@ impl CharterCsv {
         next_screen
     }
 
-    fn show_graph_screen(&mut self, ctx: &egui::Context, csv_file: &str) {
+    fn create_chart_screen(&mut self, ctx: &egui::Context, csv_file: &str) {
         CentralPanel::default().show(ctx, |ui| {
             ui.label(format!("Graph view for: {}", csv_file));
             ui.add_space(20.0);
