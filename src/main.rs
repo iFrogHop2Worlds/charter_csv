@@ -1,3 +1,4 @@
+use std::fmt::format;
 use eframe::{egui, App};
 use eframe::emath::Vec2;
 use egui::{CentralPanel, ScrollArea};
@@ -26,6 +27,7 @@ type ChartGrid = Vec<Vec<(String, f32)>>;
 struct CharterCsv {
     screen: Screen,
     csv_files: Vec<(String, CsvGrid)>,
+    selected_csv_files: Vec<usize>,
     graph_data: Option<String>,
 }
 
@@ -39,6 +41,7 @@ impl Default for CharterCsv {
                     vec!["id".to_string(), "product_name".to_string(), "qty".to_string(), "price".to_string()]
                 ]
             )],
+            selected_csv_files: vec![],
             graph_data: None,
         }
     }
@@ -290,14 +293,64 @@ impl CharterCsv {
                 self.screen = Screen::Main;
             }
             ui.label("Step 1. Select CSV files:".to_string());
+            ScrollArea::vertical().show(ui, |ui| {
+                for (index, file) in self.csv_files.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let file_name = &file.0;
+                        let mut selected = self.selected_csv_files.iter().any(|(f)| f == &index);
+
+                        if ui.checkbox(&mut selected, file_name).clicked() {
+                            if selected {
+                               self.selected_csv_files.push(index);
+                            } else {
+                                self.selected_csv_files.retain(|(f)| f != &index);
+                            }
+                        }
+                    });
+                }
+            });
             ui.add_space(20.0);
+
             ui.label("Step 2. Select fields to chart:".to_string());
+            let mut csv_columns: Vec<Vec<String>> = Vec::new();
+            for (index) in self.selected_csv_files.iter() {
+                if let Some(csv_file) = self.csv_files.get(*index) {
+                    let column_titles = csv_file.1
+                        .get(0)
+                        .map(|row| row.clone())
+                        .unwrap_or_default();
+                    csv_columns.push(column_titles);
+                }
+            }
+
+            ui.horizontal(|ui| {
+                for (index, fields) in csv_columns.iter().enumerate() {
+                    ui.push_id(index, |ui| {
+                        ui.group(|ui| {
+                            ui.set_min_size(Vec2::new(380.0, 150.0));
+                            ScrollArea::both()
+                                .max_height(150.0)
+                                .max_width(380.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        for field in fields.iter() {
+                                            if ui.button(field).clicked() {
+                                                println!("clicked {}", field);
+                                            }
+                                        }
+                                    });
+                                });
+                        });
+                    });
+                }
+            });
+
             ui.add_space(20.0);
-            ui.label("fields...");
+
+            ui.label("Step 3. Create comparisons logic:".to_string());
             ui.add_space(20.0);
-            ui.label("Step 3. Organize comparisons:".to_string());
-            ui.add_space(20.0);
-            ui.label("Step 4. Select chart type to fit data:".to_string());
+
+            ui.label("Step 4. Fit data to chart:".to_string());
 
             if ui.button("Export Chart").clicked() {
                 // todo
