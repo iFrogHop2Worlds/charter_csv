@@ -28,7 +28,26 @@ struct CharterCsv {
     screen: Screen,
     csv_files: Vec<(String, CsvGrid)>,
     selected_csv_files: Vec<usize>,
+    fields_2_compare: Vec<Vec<String>>,
     graph_data: Option<String>,
+}
+#[derive(Debug)]
+enum Value {
+    Number(f64),
+    Text(String),
+    Field(String),
+    Column(Vec<String>), // For storing column data
+}
+
+#[derive(Debug)]
+enum Operator {
+    Sum,
+    Avg,
+    Count,
+    GroupBy,
+    Equals,
+    GreaterThan,
+    LessThan,
 }
 
 impl Default for CharterCsv {
@@ -42,6 +61,7 @@ impl Default for CharterCsv {
                 ]
             )],
             selected_csv_files: vec![],
+            fields_2_compare: vec![],
             graph_data: None,
         }
     }
@@ -114,6 +134,287 @@ impl CharterCsv {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    // Aggregation Operators
+    fn sum(&self, column: &str, group_by: Option<&[String]>) -> Vec<(String, f64)> {
+        let mut result = std::collections::HashMap::new();
+
+        for &file_idx in &self.selected_csv_files {
+            if let Some((_, grid)) = self.csv_files.get(file_idx) {
+                if grid.is_empty() { continue; }
+
+                // Find column index
+                let headers = &grid[0];
+                let col_idx = match headers.iter().position(|h| h == column) {
+                    Some(idx) => idx,
+                    None => continue,
+                };
+
+                // Process data rows
+                for row in grid.iter().skip(1) {
+                    if row.len() <= col_idx { continue; }
+
+                    let key = match group_by {
+                        Some(group_cols) => {
+                            let mut key = String::new();
+                            for group_col in group_cols {
+                                if let Some(idx) = headers.iter().position(|h| h == group_col) {
+                                    if let Some(val) = row.get(idx) {
+                                        key.push_str(val);
+                                        key.push('|');
+                                    }
+                                }
+                            }
+                            key
+                        }
+                        None => "total".to_string(),
+                    };
+
+                    if let Ok(value) = row[col_idx].parse::<f64>() {
+                        *result.entry(key).or_insert(0.0) += value;
+                    }
+                }
+            }
+        }
+
+        result.into_iter().collect()
+    }
+
+    fn average(&self, column: &str, group_by: Option<&[String]>) -> Vec<(String, f64)> {
+        let mut sums = std::collections::HashMap::new();
+        let mut counts = std::collections::HashMap::new();
+
+        for &file_idx in &self.selected_csv_files {
+            if let Some((_, grid)) = self.csv_files.get(file_idx) {
+                if grid.is_empty() { continue; }
+
+                let headers = &grid[0];
+                let col_idx = match headers.iter().position(|h| h == column) {
+                    Some(idx) => idx,
+                    None => continue,
+                };
+
+                for row in grid.iter().skip(1) {
+                    if row.len() <= col_idx { continue; }
+
+                    let key = match group_by {
+                        Some(group_cols) => {
+                            let mut key = String::new();
+                            for group_col in group_cols {
+                                if let Some(idx) = headers.iter().position(|h| h == group_col) {
+                                    if let Some(val) = row.get(idx) {
+                                        key.push_str(val);
+                                        key.push('|');
+                                    }
+                                }
+                            }
+                            key
+                        }
+                        None => "total".to_string(),
+                    };
+
+                    if let Ok(value) = row[col_idx].parse::<f64>() {
+                        *sums.entry(key.clone()).or_insert(0.0) += value;
+                        *counts.entry(key).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        sums.into_iter()
+            .filter_map(|(key, sum)| {
+                counts.get(&key).map(|&count| {
+                    (key, sum / count as f64)
+                })
+            })
+            .collect()
+    }
+
+    fn count(&self, column: &str, group_by: Option<&[String]>) -> Vec<(String, i32)> {
+        let mut counts = std::collections::HashMap::new();
+
+        for &file_idx in &self.selected_csv_files {
+            if let Some((_, grid)) = self.csv_files.get(file_idx) {
+                if grid.is_empty() { continue; }
+
+                let headers = &grid[0];
+                let col_idx = match headers.iter().position(|h| h == column) {
+                    Some(idx) => idx,
+                    None => continue,
+                };
+
+                for row in grid.iter().skip(1) {
+                    if row.len() <= col_idx { continue; }
+
+                    let key = match group_by {
+                        Some(group_cols) => {
+                            let mut key = String::new();
+                            for group_col in group_cols {
+                                if let Some(idx) = headers.iter().position(|h| h == group_col) {
+                                    if let Some(val) = row.get(idx) {
+                                        key.push_str(val);
+                                        key.push('|');
+                                    }
+                                }
+                            }
+                            key
+                        }
+                        None => row[col_idx].clone(),
+                    };
+
+                    *counts.entry(key).or_insert(0) += 1;
+                }
+            }
+        }
+
+        counts.into_iter().collect()
+    }
+
+    // Comparison Operators
+    fn filter_equals(&self, column: &str, value: &str) -> Vec<Vec<String>> {
+        let mut result = Vec::new();
+
+        for &file_idx in &self.selected_csv_files {
+            if let Some((_, grid)) = self.csv_files.get(file_idx) {
+                if grid.is_empty() { continue; }
+
+                let headers = &grid[0];
+                let col_idx = match headers.iter().position(|h| h == column) {
+                    Some(idx) => idx,
+                    None => continue,
+                };
+
+                result.push(headers.clone());
+                for row in grid.iter().skip(1) {
+                    if row.len() > col_idx && row[col_idx] == value {
+                        result.push(row.clone());
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    fn filter_greater_than(&self, column: &str, value: f64) -> Vec<Vec<String>> {
+        let mut result = Vec::new();
+
+        for &file_idx in &self.selected_csv_files {
+            if let Some((_, grid)) = self.csv_files.get(file_idx) {
+                if grid.is_empty() { continue; }
+
+                let headers = &grid[0];
+                let col_idx = match headers.iter().position(|h| h == column) {
+                    Some(idx) => idx,
+                    None => continue,
+                };
+
+                result.push(headers.clone());
+                for row in grid.iter().skip(1) {
+                    if row.len() > col_idx {
+                        if let Ok(num) = row[col_idx].parse::<f64>() {
+                            if num > value {
+                                result.push(row.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result
+    }
+    // uses aggregate operators to execute our query self.fields_2_compare
+    fn evaluate_expression(&self, expressions: &[String]) -> Option<Value> {
+        let mut stack: Vec<Value> = Vec::new();
+
+        let mut i = 0;
+        while i < expressions.len() {
+            match expressions[i].as_str() {
+                "SUM" => {
+                    if i + 1 < expressions.len() {
+                        let field = &expressions[i + 1];
+                        let result = self.sum(field, None);
+                        stack.push(Value::Number(result.iter().map(|(_, v)| v).sum()));
+                        i += 2;
+                    }
+                }
+                "AVG" => {
+                    if i + 1 < expressions.len() {
+                        let field = &expressions[i + 1];
+                        let result = self.average(field, None);
+                        let avg = result.iter().map(|(_, v)| v).sum::<f64>() / result.len() as f64;
+                        stack.push(Value::Number(avg));
+                        i += 2;
+                    }
+                }
+                "COUNT" => {
+                    if i + 1 < expressions.len() {
+                        let field = &expressions[i + 1];
+                        let result = self.count(field, None);
+                        stack.push(Value::Number(result.len() as f64));
+                        i += 2;
+                    }
+                }
+                ">" => {
+                    if stack.len() >= 2 {
+                        let right = stack.pop().unwrap();
+                        let left = stack.pop().unwrap();
+                        match (left, right) {
+                            (Value::Number(l), Value::Number(r)) => {
+                                stack.push(Value::Number(if l > r { 1.0 } else { 0.0 }));
+                            }
+                            _ => println!("Cannot compare non-numeric values"),
+                        }
+                    }
+                    i += 1;
+                }
+                "<" => {
+                    if stack.len() >= 2 {
+                        let right = stack.pop().unwrap();
+                        let left = stack.pop().unwrap();
+                        match (left, right) {
+                            (Value::Number(l), Value::Number(r)) => {
+                                stack.push(Value::Number(if l < r { 1.0 } else { 0.0 }));
+                            }
+                            _ => println!("Cannot compare non-numeric values"),
+                        }
+                    }
+                    i += 1;
+                }
+                "=" => {
+                    if stack.len() >= 2 {
+                        let right = stack.pop().unwrap();
+                        let left = stack.pop().unwrap();
+                        match (left, right) {
+                            (Value::Number(l), Value::Number(r)) => {
+                                stack.push(Value::Number(if l == r { 1.0 } else { 0.0 }));
+                            }
+                            (Value::Text(l), Value::Text(r)) => {
+                                stack.push(Value::Number(if l == r { 1.0 } else { 0.0 }));
+                            }
+                            _ => println!("Cannot compare different types"),
+                        }
+                    }
+                    i += 1;
+                }
+                _ => {
+                    // Try to parse as number
+                    if let Ok(num) = expressions[i].parse::<f64>() {
+                        stack.push(Value::Number(num));
+                    } else {
+                        // Treat as field name
+                        stack.push(Value::Field(expressions[i].clone()));
+                    }
+                    i += 1;
+                }
+            }
+        }
+
+        stack.pop()
+    }
+
+    // Render ui
     fn show_main_screen(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
@@ -311,7 +612,7 @@ impl CharterCsv {
             });
             ui.add_space(20.0);
 
-            ui.label("Step 2. Select fields to chart:".to_string());
+            ui.label("Step 2. Select fields & build query:".to_string());
             let mut csv_columns: Vec<Vec<String>> = Vec::new();
             for (index) in self.selected_csv_files.iter() {
                 if let Some(csv_file) = self.csv_files.get(*index) {
@@ -335,25 +636,66 @@ impl CharterCsv {
                                     ui.horizontal_wrapped(|ui| {
                                         for field in fields.iter() {
                                             if ui.button(field).clicked() {
-                                                println!("clicked {}", field);
+                                                if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                                                    self.fields_2_compare[index].push(field.to_string());
+                                                } else {
+                                                    self.fields_2_compare.push(vec![field.to_string()]);
+                                                }
+                                                println!("Compare {:?}", self.fields_2_compare);
                                             }
                                         }
                                     });
                                 });
                         });
                     });
+                    if ui.button("SUM").clicked() {
+                        self.fields_2_compare[index].push("SUM".to_string());
+                    }
+                    if ui.button("AVG").clicked() {
+                        self.fields_2_compare[index].push("AVG".to_string());
+                    }
+                    if ui.button("COUNT").clicked() {
+                        self.fields_2_compare[index].push("COUNT".to_string());
+                    }
+                    if ui.button("GROUP BY").clicked() {
+                        self.fields_2_compare[index].push("GROUP BY".to_string());
+                    }
+                    if ui.button("=").clicked() {
+                        self.fields_2_compare[index].push("=".to_string());
+                    }
+                    if ui.button(">").clicked() {
+                        self.fields_2_compare[index].push(">".to_string());
+                    }
+                    if ui.button("<").clicked() {
+                        self.fields_2_compare[index].push("<".to_string());
+                    }
                 }
             });
 
             ui.add_space(20.0);
+            if ui.button("Execute Expression").clicked() {
+                // self.fields_2_compare.push(vec![
+                //     "GROUP BY".to_string(),
+                //     "name".to_string(),
+                //     "company".to_string(),
+                //     "COUNT".to_string()
+                // ]);
+                for fields in &self.fields_2_compare {
+                    if let Some(result) = self.evaluate_expression(fields) {
+                        println!("Result: {:?}", result);
+                    }
+                }
+            }
 
-            ui.label("Step 3. Create comparisons logic:".to_string());
-            ui.add_space(20.0);
-
-            ui.label("Step 4. Fit data to chart:".to_string());
-
+            ui.label("Step 3. Fit data to chart:".to_string());
+            /*  todo Billy
+                Given the fields selected we want to graph the data.
+                This will be tricky because data could be names(Strings), roles(Strings), numbers, bools, etc..
+                1. Normalize data
+                2. Select chart & apply data
+             */
             if ui.button("Export Chart").clicked() {
-                // todo
+                // todo Billy
             }
         });
     }
