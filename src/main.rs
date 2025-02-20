@@ -31,12 +31,12 @@ struct CharterCsv {
     fields_2_compare: Vec<Vec<String>>,
     graph_data: Option<String>,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Value {
     Number(f64),
     Text(String),
     Field(String),
-    Column(Vec<String>), // For storing column data
+    Results(Vec<(String, f64)>) // For storing column data
 }
 
 #[derive(Debug)]
@@ -324,86 +324,90 @@ impl CharterCsv {
 
         result
     }
-    // uses aggregate operators to execute our query self.fields_2_compare
-    fn evaluate_expression(&self, expressions: &[String]) -> Option<Value> {
-        let mut stack: Vec<Value> = Vec::new();
 
+    fn evaluate_expression(&self, expressions: &[String]) -> Vec<Value> {
+        let mut stack: Vec<Value> = Vec::new();
+        let mut results: Vec<Value> = Vec::new();
+        let mut filter_conditions: Vec<String> = Vec::new();
         let mut i = 0;
+
         while i < expressions.len() {
             match expressions[i].as_str() {
-                "SUM" => {
+                "SUM" | "COUNT" | "AVG" | "MUL" => {
                     if i + 1 < expressions.len() {
                         let field = &expressions[i + 1];
-                        let result = self.sum(field, None);
-                        stack.push(Value::Number(result.iter().map(|(_, v)| v).sum()));
+                        let operation = expressions[i].as_str();
+
+                        // Apply all accumulated filter conditions
+                        let filter_condition = if !filter_conditions.is_empty() {
+                            Some(filter_conditions.clone())
+                        } else {
+                            None
+                        };
+
+                        let result = match operation {
+                            "SUM" => {
+                                let sum = self.sum(field, filter_condition.as_deref());
+                                Value::Number(sum.iter().map(|(_, v)| v).sum())
+                            }
+                            "COUNT" => {
+                                let count = self.count(field, filter_condition.as_deref());
+                                Value::Number(count.len() as f64)
+                            }
+                            "AVG" => {
+                                let avg = self.average(field, filter_condition.as_deref());
+                                let value = if !avg.is_empty() {
+                                    avg.iter().map(|(_, v)| v).sum::<f64>() / avg.len() as f64
+                                } else {
+                                    0.0
+                                };
+                                Value::Number(value)
+                            }
+                            "MUL" => {
+                                println!("stack: {:?}", stack);
+                                if let Some(Value::Number(left)) = stack.pop() {
+                                    let mul = self.sum(field, filter_condition.as_deref());
+                                    println!("left: {:?}, mul: {:?}", left, mul);
+                                    Value::Number(left * mul.iter().map(|(_, v)| v).product::<f64>())
+                                } else {
+                                    let mul = self.sum(field, filter_condition.as_deref());
+                                    println!("mul: {:?}", mul);
+                                    Value::Number(mul.iter().map(|(_, v)| v).product::<f64>())
+                                }
+                            }
+                            _ => unreachable!()
+                        };
+
+                        results.push(result.clone());
+                        stack.push(result);
                         i += 2;
                     }
                 }
-                "AVG" => {
-                    if i + 1 < expressions.len() {
-                        let field = &expressions[i + 1];
-                        let result = self.average(field, None);
-                        let avg = result.iter().map(|(_, v)| v).sum::<f64>() / result.len() as f64;
-                        stack.push(Value::Number(avg));
-                        i += 2;
-                    }
-                }
-                "COUNT" => {
-                    if i + 1 < expressions.len() {
-                        let field = &expressions[i + 1];
-                        let result = self.count(field, None);
-                        stack.push(Value::Number(result.len() as f64));
-                        i += 2;
-                    }
-                }
-                ">" => {
+                ">" | "<" | "=" => {
                     if stack.len() >= 2 {
                         let right = stack.pop().unwrap();
                         let left = stack.pop().unwrap();
-                        match (left, right) {
-                            (Value::Number(l), Value::Number(r)) => {
-                                stack.push(Value::Number(if l > r { 1.0 } else { 0.0 }));
+
+                        // Create filter condition based on comparison
+                        let condition = match (left, right) {
+                            (Value::Field(field_left), Value::Field(field_right)) => {
+                                format!("{} {} {}", field_left, expressions[i], field_right)
                             }
-                            _ => println!("Cannot compare non-numeric values"),
-                        }
-                    }
-                    i += 1;
-                }
-                "<" => {
-                    if stack.len() >= 2 {
-                        let right = stack.pop().unwrap();
-                        let left = stack.pop().unwrap();
-                        match (left, right) {
-                            (Value::Number(l), Value::Number(r)) => {
-                                stack.push(Value::Number(if l < r { 1.0 } else { 0.0 }));
+                            (Value::Field(field), Value::Number(num)) |
+                            (Value::Number(num), Value::Field(field)) => {
+                                format!("{} {} {}", field, expressions[i], num)
                             }
-                            _ => println!("Cannot compare non-numeric values"),
-                        }
-                    }
-                    i += 1;
-                }
-                "=" => {
-                    if stack.len() >= 2 {
-                        let right = stack.pop().unwrap();
-                        let left = stack.pop().unwrap();
-                        match (left, right) {
-                            (Value::Number(l), Value::Number(r)) => {
-                                stack.push(Value::Number(if l == r { 1.0 } else { 0.0 }));
-                            }
-                            (Value::Text(l), Value::Text(r)) => {
-                                stack.push(Value::Number(if l == r { 1.0 } else { 0.0 }));
-                            }
-                            _ => println!("Cannot compare different types"),
-                        }
+                            _ => String::from("false")
+                        };
+
+                        filter_conditions.push(condition);
                     }
                     i += 1;
                 }
                 _ => {
-                    // Try to parse as number
                     if let Ok(num) = expressions[i].parse::<f64>() {
                         stack.push(Value::Number(num));
                     } else {
-                        // Treat as field name
                         stack.push(Value::Field(expressions[i].clone()));
                     }
                     i += 1;
@@ -411,7 +415,11 @@ impl CharterCsv {
             }
         }
 
-        stack.pop()
+        if results.is_empty() && !stack.is_empty() {
+            results.push(stack.pop().unwrap());
+        }
+
+        results
     }
 
     // Render ui
@@ -649,30 +657,68 @@ impl CharterCsv {
                         });
                     });
                     if ui.button("SUM").clicked() {
-                        self.fields_2_compare[index].push("SUM".to_string());
+                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                             self.fields_2_compare[index].push("SUM".to_string());
+                         } else {
+                             self.fields_2_compare.push(vec!["SUM".to_string()]);
+                         }
                     }
                     if ui.button("AVG").clicked() {
-                        self.fields_2_compare[index].push("AVG".to_string());
+                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                             self.fields_2_compare[index].push("AVG".to_string());
+                         } else {
+                             self.fields_2_compare.push(vec!["AVG".to_string()]);
+                         }
                     }
                     if ui.button("COUNT").clicked() {
-                        self.fields_2_compare[index].push("COUNT".to_string());
+                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                             self.fields_2_compare[index].push("COUNT".to_string());
+                         } else {
+                             self.fields_2_compare.push(vec!["COUNT".to_string()]);
+                         }
                     }
-                    if ui.button("GROUP BY").clicked() {
-                        self.fields_2_compare[index].push("GROUP BY".to_string());
+                    if ui.button("MUL").clicked() {
+                        if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                            self.fields_2_compare[index].push("MUL".to_string());
+                        } else {
+                            self.fields_2_compare.push(vec!["MUL".to_string()]);
+                        }
                     }
+                    // if ui.button("GROUP BY").clicked() {
+                    //      if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                    //          self.fields_2_compare[index].push("GROUP BY".to_string());
+                    //      } else {
+                    //          self.fields_2_compare.push(vec!["GROUP BY".to_string()]);
+                    //      }
+                    // }
                     if ui.button("=").clicked() {
-                        self.fields_2_compare[index].push("=".to_string());
+                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                             self.fields_2_compare[index].push("=".to_string());
+                         } else {
+                             self.fields_2_compare.push(vec!["=".to_string()]);
+                         }
                     }
                     if ui.button(">").clicked() {
-                        self.fields_2_compare[index].push(">".to_string());
+                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                             self.fields_2_compare[index].push(">".to_string());
+                         } else {
+                             self.fields_2_compare.push(vec![">".to_string()]);
+                         }
                     }
                     if ui.button("<").clicked() {
-                        self.fields_2_compare[index].push("<".to_string());
+                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                             self.fields_2_compare[index].push("<".to_string());
+                         } else {
+                             self.fields_2_compare.push(vec!["<".to_string()]);
+                         }
                     }
                 }
             });
 
             ui.add_space(20.0);
+            if ui.button("reset query").clicked() {
+                self.fields_2_compare.clear();
+            }
             if ui.button("Execute Expression").clicked() {
                 // self.fields_2_compare.push(vec![
                 //     "GROUP BY".to_string(),
@@ -681,7 +727,8 @@ impl CharterCsv {
                 //     "COUNT".to_string()
                 // ]);
                 for fields in &self.fields_2_compare {
-                    if let Some(result) = self.evaluate_expression(fields) {
+                    let result = self.evaluate_expression(fields);
+                    if !result.is_empty() {
                         println!("Result: {:?}", result);
                     }
                 }
