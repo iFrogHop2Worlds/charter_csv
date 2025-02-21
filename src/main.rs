@@ -33,6 +33,7 @@ struct CharterCsv {
 }
 #[derive(Debug, Clone)]
 enum Value {
+    Bool(bool),
     Number(f64),
     Text(String),
     Field(String),
@@ -101,7 +102,7 @@ impl App for CharterCsv {
                 let next_screen = self.show_csv_editor(ctx, &mut content_owned, Some(index));
                 self.screen = match next_screen {
                     Some(screen) => screen,
-                    None => Screen::EditCsv {
+                        None => Screen::EditCsv {
                         index,
                         content: content_owned,
                     },
@@ -261,12 +262,11 @@ impl CharterCsv {
                         }
                         None => row[col_idx].clone(),
                     };
-
                     *counts.entry(key).or_insert(0) += 1;
                 }
             }
         }
-
+        println!("counts: {:?}", counts);
         counts.into_iter().collect()
     }
 
@@ -326,13 +326,18 @@ impl CharterCsv {
     }
 
     fn evaluate_expression(&self, expressions: &[String]) -> Vec<Value> {
-        let mut stack: Vec<Value> = Vec::new();
+        let mut stack: Vec<Value> = vec![];
         let mut results: Vec<Value> = Vec::new();
         let mut filter_conditions: Vec<String> = Vec::new();
         let mut i = 0;
 
         while i < expressions.len() {
             match expressions[i].as_str() {
+                "GRP" => {
+                  filter_conditions.push(expressions[i + 1].clone());
+                    filter_conditions.push(expressions[i + 2].clone());
+                    i += 3;
+                }
                 "SUM" | "COUNT" | "AVG" | "MUL" => {
                     if i + 1 < expressions.len() {
                         let field = &expressions[i + 1];
@@ -380,30 +385,67 @@ impl CharterCsv {
 
                         results.push(result.clone());
                         stack.push(result);
+                        println!("12stack: {:?}", stack);
                         i += 2;
                     }
                 }
+
                 ">" | "<" | "=" => {
                     if stack.len() >= 2 {
                         let right = stack.pop().unwrap();
                         let left = stack.pop().unwrap();
+                         println!("right: {:?}, left: {:?}", right, left);
+                        match expressions[i].as_str() {
+                            ">" => {
+                                let comparison = match (left, right) {
+                                    (Value::Number(left), Value::Number(right)) => {
+                                        Value::Bool(left > right)
+                                    }
+
+                                    _ => unreachable!()
+                                };
+                                results.push(comparison)
+                            }
+                            "<" => {
+                                let comparison = match (left, right) {
+                                    (Value::Number(left), Value::Number(right)) => {
+                                        Value::Bool(left < right)
+                                    }
+
+                                    _ => unreachable!()
+                                };
+                                results.push(comparison)
+                            }
+                            "=" => {
+                                let comparison = match (left, right) {
+                                    (Value::Number(left), Value::Number(right)) => {
+                                        Value::Bool(left == right)
+                                    }
+
+                                    _ => unreachable!()
+                                };
+                                results.push(comparison)
+                            }
+                            _ => unreachable!()
+                        }
 
                         // Create filter condition based on comparison
-                        let condition = match (left, right) {
-                            (Value::Field(field_left), Value::Field(field_right)) => {
-                                format!("{} {} {}", field_left, expressions[i], field_right)
-                            }
-                            (Value::Field(field), Value::Number(num)) |
-                            (Value::Number(num), Value::Field(field)) => {
-                                format!("{} {} {}", field, expressions[i], num)
-                            }
-                            _ => String::from("false")
-                        };
+                        // let comparison = match (left, right) {
+                        //     (Value::Number(left), Value::Number(right)) => {
+                        //         format!("{}", left > right);
+                        //         Value::Bool(left > right)
+                        //     }
+                        //
+                        //     _ => unreachable!()
+                        // };
 
-                        filter_conditions.push(condition);
+
+                        //filter_conditions.push(condition);
                     }
+
                     i += 1;
                 }
+
                 _ => {
                     if let Ok(num) = expressions[i].parse::<f64>() {
                         stack.push(Value::Number(num));
@@ -684,13 +726,13 @@ impl CharterCsv {
                             self.fields_2_compare.push(vec!["MUL".to_string()]);
                         }
                     }
-                    // if ui.button("GROUP BY").clicked() {
-                    //      if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                    //          self.fields_2_compare[index].push("GROUP BY".to_string());
-                    //      } else {
-                    //          self.fields_2_compare.push(vec!["GROUP BY".to_string()]);
-                    //      }
-                    // }
+                    if ui.button("GRP").clicked() {
+                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
+                             self.fields_2_compare[index].push("GRP".to_string());
+                         } else {
+                             self.fields_2_compare.push(vec!["GRP".to_string()]);
+                         }
+                    }
                     if ui.button("=").clicked() {
                          if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
                              self.fields_2_compare[index].push("=".to_string());
@@ -720,12 +762,6 @@ impl CharterCsv {
                 self.fields_2_compare.clear();
             }
             if ui.button("Execute Expression").clicked() {
-                // self.fields_2_compare.push(vec![
-                //     "GROUP BY".to_string(),
-                //     "name".to_string(),
-                //     "company".to_string(),
-                //     "COUNT".to_string()
-                // ]);
                 for fields in &self.fields_2_compare {
                     let result = self.evaluate_expression(fields);
                     if !result.is_empty() {
