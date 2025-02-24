@@ -6,7 +6,7 @@ use egui::{CentralPanel, ScrollArea};
 fn main() {
     let ctx = egui::Context::default();
     let mut size = ctx.used_size();
-    size.x = 1300.00;
+    size.x = 780.00;
     size.y = 720.00;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -28,7 +28,7 @@ struct CharterCsv {
     screen: Screen,
     csv_files: Vec<(String, CsvGrid)>,
     selected_csv_files: Vec<usize>,
-    fields_2_compare: Vec<Vec<String>>,
+    csvqb_pipeline: Vec<Vec<String>>,
     graph_data: Option<String>,
 }
 #[derive(Debug, Clone)]
@@ -62,7 +62,7 @@ impl Default for CharterCsv {
                 ]
             )],
             selected_csv_files: vec![],
-            fields_2_compare: vec![],
+            csvqb_pipeline: vec![],
             graph_data: None,
         }
     }
@@ -325,41 +325,47 @@ impl CharterCsv {
         result
     }
 
-    fn evaluate_expression(&self, expressions: &[String]) -> Vec<Value> {
+    fn process_csvqb_pipeline(&self, qb_pipeline: &[String]) -> Vec<Value> {
         let mut stack: Vec<Value> = vec![];
         let mut results: Vec<Value> = Vec::new();
-        let mut filter_conditions: Vec<String> = Vec::new();
+        let mut capture_group: Vec<String> = Vec::new();
         let mut i = 0;
 
-        while i < expressions.len() {
-            match expressions[i].as_str() {
+        while i < qb_pipeline.len() {
+            match qb_pipeline[i].as_str() {
                 "GRP" => {
-                  filter_conditions.push(expressions[i + 1].clone());
-                    filter_conditions.push(expressions[i + 2].clone());
-                    i += 3;
+                    while i + 1 < qb_pipeline.len() {
+                        if ["GRP", "CSUM", "CCOUNT", "CAVG", "CMUL", "MUL"].contains(&qb_pipeline[i + 1].as_str()) {
+                            break;
+                        }
+                        capture_group.push(qb_pipeline[i + 1].clone());
+                        i+=1
+                    }
+                    println!("filter conditions: {:?}", capture_group);
+                    i+=1
                 }
-                "SUM" | "COUNT" | "AVG" | "MUL" => {
-                    if i + 1 < expressions.len() {
-                        let field = &expressions[i + 1];
-                        let operation = expressions[i].as_str();
+                "CSUM" | "CCOUNT" | "CAVG" | "CMUL" => {
+                    if i + 1 < qb_pipeline.len() {
+                        let field = &qb_pipeline[i + 1];
+                        let operation = qb_pipeline[i].as_str();
 
                         // Apply all accumulated filter conditions
-                        let filter_condition = if !filter_conditions.is_empty() {
-                            Some(filter_conditions.clone())
+                        let filter_condition = if !capture_group.is_empty() {
+                            Some(capture_group.clone())
                         } else {
                             None
                         };
 
                         let result = match operation {
-                            "SUM" => {
+                            "CSUM" => {
                                 let sum = self.sum(field, filter_condition.as_deref());
                                 Value::Number(sum.iter().map(|(_, v)| v).sum())
                             }
-                            "COUNT" => {
+                            "CCOUNT" => {
                                 let count = self.count(field, filter_condition.as_deref());
                                 Value::Number(count.len() as f64)
                             }
-                            "AVG" => {
+                            "CAVG" => {
                                 let avg = self.average(field, filter_condition.as_deref());
                                 let value = if !avg.is_empty() {
                                     avg.iter().map(|(_, v)| v).sum::<f64>() / avg.len() as f64
@@ -368,7 +374,7 @@ impl CharterCsv {
                                 };
                                 Value::Number(value)
                             }
-                            "MUL" => {
+                            "CMUL" => {
                                 println!("stack: {:?}", stack);
                                 if let Some(Value::Number(left)) = stack.pop() {
                                     let mul = self.sum(field, filter_condition.as_deref());
@@ -380,13 +386,25 @@ impl CharterCsv {
                                     Value::Number(mul.iter().map(|(_, v)| v).product::<f64>())
                                 }
                             }
+
                             _ => unreachable!()
                         };
 
                         results.push(result.clone());
                         stack.push(result);
-                        println!("12stack: {:?}", stack);
-                        i += 2;
+                        i+=1
+                    }
+                }
+                "MUL" => {
+                    println!("stack: {:?}", stack);
+                    if let (Some(Value::Number(right)), Some(Value::Number(left))) = (stack.pop(), stack.pop()) {
+                        //let mul = self.sum(field, filter_condition.as_deref());
+                        println!("{:?} * {:?} =  {:?}", left, right, left * right);
+                        results.clear();
+                        results.push(Value::Number(left * right));
+                    } else {
+                        println!("err in MUL");
+                        break;
                     }
                 }
 
@@ -395,13 +413,12 @@ impl CharterCsv {
                         let right = stack.pop().unwrap();
                         let left = stack.pop().unwrap();
                          println!("right: {:?}, left: {:?}", right, left);
-                        match expressions[i].as_str() {
+                        match qb_pipeline[i].as_str() {
                             ">" => {
                                 let comparison = match (left, right) {
                                     (Value::Number(left), Value::Number(right)) => {
                                         Value::Bool(left > right)
                                     }
-
                                     _ => unreachable!()
                                 };
                                 results.push(comparison)
@@ -411,7 +428,6 @@ impl CharterCsv {
                                     (Value::Number(left), Value::Number(right)) => {
                                         Value::Bool(left < right)
                                     }
-
                                     _ => unreachable!()
                                 };
                                 results.push(comparison)
@@ -421,38 +437,42 @@ impl CharterCsv {
                                     (Value::Number(left), Value::Number(right)) => {
                                         Value::Bool(left == right)
                                     }
-
                                     _ => unreachable!()
                                 };
                                 results.push(comparison)
                             }
                             _ => unreachable!()
                         }
-
-                        // Create filter condition based on comparison
-                        // let comparison = match (left, right) {
-                        //     (Value::Number(left), Value::Number(right)) => {
-                        //         format!("{}", left > right);
-                        //         Value::Bool(left > right)
-                        //     }
-                        //
-                        //     _ => unreachable!()
-                        // };
-
-
-                        //filter_conditions.push(condition);
                     }
 
-                    i += 1;
+                    i+=1
+                }
+                "(" | ")" => {
+                    if qb_pipeline[i] == "(" {
+                        while i < qb_pipeline.len() {
+                            if qb_pipeline[i] == ")" {
+                                break
+                            }
+                            let result = self.process_csvqb_pipeline(&qb_pipeline[i+1..]);
+                            println!("result: {},  {:?}", i, result);
+                            if !result.is_empty() {
+                                results.push(result[0].clone());
+                                break;
+                            }
+                            i+=1
+                        }
+                    }
+                    i+=1
                 }
 
                 _ => {
-                    if let Ok(num) = expressions[i].parse::<f64>() {
+                    if let Ok(num) = qb_pipeline[i].parse::<f64>() {
                         stack.push(Value::Number(num));
-                    } else {
-                        stack.push(Value::Field(expressions[i].clone()));
                     }
-                    i += 1;
+                    // else {
+                    //     stack.push(Value::Field(qb_pipeline[i].clone()));
+                    // }
+                    i+=1
                 }
             }
         }
@@ -686,72 +706,93 @@ impl CharterCsv {
                                     ui.horizontal_wrapped(|ui| {
                                         for field in fields.iter() {
                                             if ui.button(field).clicked() {
-                                                if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                                                    self.fields_2_compare[index].push(field.to_string());
+                                                if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                    self.csvqb_pipeline[index].push(field.to_string());
                                                 } else {
-                                                    self.fields_2_compare.push(vec![field.to_string()]);
+                                                    self.csvqb_pipeline.push(vec![field.to_string()]);
                                                 }
-                                                println!("Compare {:?}", self.fields_2_compare);
+                                                println!("Compare {:?}", self.csvqb_pipeline);
                                             }
                                         }
                                     });
                                 });
                         });
                     });
-                    if ui.button("SUM").clicked() {
-                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                             self.fields_2_compare[index].push("SUM".to_string());
-                         } else {
-                             self.fields_2_compare.push(vec!["SUM".to_string()]);
-                         }
-                    }
-                    if ui.button("AVG").clicked() {
-                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                             self.fields_2_compare[index].push("AVG".to_string());
-                         } else {
-                             self.fields_2_compare.push(vec!["AVG".to_string()]);
-                         }
-                    }
-                    if ui.button("COUNT").clicked() {
-                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                             self.fields_2_compare[index].push("COUNT".to_string());
-                         } else {
-                             self.fields_2_compare.push(vec!["COUNT".to_string()]);
-                         }
-                    }
-                    if ui.button("MUL").clicked() {
-                        if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                            self.fields_2_compare[index].push("MUL".to_string());
+                    if ui.button("(").clicked() {
+                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                            self.csvqb_pipeline[index].push("(".to_string());
                         } else {
-                            self.fields_2_compare.push(vec!["MUL".to_string()]);
+                            self.csvqb_pipeline.push(vec!["(".to_string()]);
+                        }
+                    }
+                    if ui.button(")").clicked() {
+                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                            self.csvqb_pipeline[index].push(")".to_string());
+                        } else {
+                            self.csvqb_pipeline.push(vec![")".to_string()]);
                         }
                     }
                     if ui.button("GRP").clicked() {
-                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                             self.fields_2_compare[index].push("GRP".to_string());
+                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                            self.csvqb_pipeline[index].push("GRP".to_string());
+                        } else {
+                            self.csvqb_pipeline.push(vec!["GRP".to_string()]);
+                        }
+                    }
+                    if ui.button("CSUM").clicked() {
+                         if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                             self.csvqb_pipeline[index].push("CSUM".to_string());
                          } else {
-                             self.fields_2_compare.push(vec!["GRP".to_string()]);
+                             self.csvqb_pipeline.push(vec!["CSUM".to_string()]);
                          }
                     }
-                    if ui.button("=").clicked() {
-                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                             self.fields_2_compare[index].push("=".to_string());
+                    if ui.button("CAVG").clicked() {
+                         if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                             self.csvqb_pipeline[index].push("CAVG".to_string());
                          } else {
-                             self.fields_2_compare.push(vec!["=".to_string()]);
+                             self.csvqb_pipeline.push(vec!["CAVG".to_string()]);
+                         }
+                    }
+                    if ui.button("CCOUNT").clicked() {
+                         if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                             self.csvqb_pipeline[index].push("CCOUNT".to_string());
+                         } else {
+                             self.csvqb_pipeline.push(vec!["CCOUNT".to_string()]);
+                         }
+                    }
+                    if ui.button("CMUL").clicked() {
+                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                            self.csvqb_pipeline[index].push("CMUL".to_string());
+                        } else {
+                            self.csvqb_pipeline.push(vec!["CMUL".to_string()]);
+                        }
+                    }
+                    if ui.button("MUL").clicked() {
+                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                            self.csvqb_pipeline[index].push("MUL".to_string());
+                        } else {
+                            self.csvqb_pipeline.push(vec!["MUL".to_string()]);
+                        }
+                    }
+                    if ui.button("=").clicked() {
+                         if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                             self.csvqb_pipeline[index].push("=".to_string());
+                         } else {
+                             self.csvqb_pipeline.push(vec!["=".to_string()]);
                          }
                     }
                     if ui.button(">").clicked() {
-                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                             self.fields_2_compare[index].push(">".to_string());
+                         if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                             self.csvqb_pipeline[index].push(">".to_string());
                          } else {
-                             self.fields_2_compare.push(vec![">".to_string()]);
+                             self.csvqb_pipeline.push(vec![">".to_string()]);
                          }
                     }
                     if ui.button("<").clicked() {
-                         if self.fields_2_compare.len() > 0 && self.fields_2_compare.len()-1 >= index {
-                             self.fields_2_compare[index].push("<".to_string());
+                         if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                             self.csvqb_pipeline[index].push("<".to_string());
                          } else {
-                             self.fields_2_compare.push(vec!["<".to_string()]);
+                             self.csvqb_pipeline.push(vec!["<".to_string()]);
                          }
                     }
                 }
@@ -759,11 +800,13 @@ impl CharterCsv {
 
             ui.add_space(20.0);
             if ui.button("reset query").clicked() {
-                self.fields_2_compare.clear();
+                self.csvqb_pipeline.clear();
             }
+            //let test_pipeline = vec![["MUL".to_string(),"SUM".to_string(), "qty".to_string(), "SUM".to_string(), "sold".to_string()]];
+            //let test_pipeline = vec![["SUM".to_string(), "qty".to_string(), "SUM".to_string(), "sold".to_string(), "MUL".to_string()]];
             if ui.button("Execute Expression").clicked() {
-                for fields in &self.fields_2_compare {
-                    let result = self.evaluate_expression(fields);
+                for fields in self.csvqb_pipeline.iter() {
+                    let result = self.process_csvqb_pipeline(fields);
                     if !result.is_empty() {
                         println!("Result: {:?}", result);
                     }
@@ -771,12 +814,8 @@ impl CharterCsv {
             }
 
             ui.label("Step 3. Fit data to chart:".to_string());
-            /*  todo Billy
-                Given the fields selected we want to graph the data.
-                This will be tricky because data could be names(Strings), roles(Strings), numbers, bools, etc..
-                1. Normalize data
-                2. Select chart & apply data
-             */
+            // todo Billy
+
             if ui.button("Export Chart").clicked() {
                 // todo Billy
             }
