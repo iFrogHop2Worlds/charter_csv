@@ -1,4 +1,3 @@
-use std::fmt::format;
 use eframe::{egui, App};
 use eframe::emath::Vec2;
 use egui::{CentralPanel, ScrollArea};
@@ -7,7 +6,7 @@ fn main() {
     let ctx = egui::Context::default();
     let mut size = ctx.used_size();
     size.x = 780.00;
-    size.y = 720.00;
+    size.y = 420.00;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_resizable(true)
@@ -29,7 +28,7 @@ struct CharterCsv {
     csv_files: Vec<(String, CsvGrid)>,
     selected_csv_files: Vec<usize>,
     csvqb_pipeline: Vec<Vec<String>>,
-    graph_data: Option<String>,
+    graph_data: Vec<Value>,
 }
 #[derive(Debug, Clone)]
 enum Value {
@@ -37,7 +36,7 @@ enum Value {
     Number(f64),
     Text(String),
     Field(String),
-    Results(Vec<(String, f64)>) // For storing column data
+    QueryResult(Vec<Vec<(String)>>) // For storing column data
 }
 
 #[derive(Debug)]
@@ -63,7 +62,7 @@ impl Default for CharterCsv {
             )],
             selected_csv_files: vec![],
             csvqb_pipeline: vec![],
-            graph_data: None,
+            graph_data: vec![],
         }
     }
 }
@@ -136,8 +135,7 @@ impl CharterCsv {
             .join("\n")
     }
 
-    // Aggregation Operators
-    fn sum(&self, column: &str, group_by: Option<&[String]>) -> Vec<(String, f64)> {
+    fn col_sum(&self, column: &str, group_by: Option<&[String]>) -> Vec<(String, f64)> {
         let mut result = std::collections::HashMap::new();
 
         for &file_idx in &self.selected_csv_files {
@@ -181,7 +179,7 @@ impl CharterCsv {
         result.into_iter().collect()
     }
 
-    fn average(&self, column: &str, group_by: Option<&[String]>) -> Vec<(String, f64)> {
+    fn col_average(&self, column: &str, group_by: Option<&[String]>) -> Vec<(String, f64)> {
         let mut sums = std::collections::HashMap::new();
         let mut counts = std::collections::HashMap::new();
 
@@ -231,9 +229,9 @@ impl CharterCsv {
             .collect()
     }
 
-    fn count(&self, column: &str, group_by: Option<&[String]>) -> Vec<(String, i32)> {
+    fn col_count(&self, column: &str, group_by: Option<&[String]>) -> Vec<Vec<String>> {
         let mut counts = std::collections::HashMap::new();
-
+        let mut query_grid = Vec::new();
         for &file_idx in &self.selected_csv_files {
             if let Some((_, grid)) = self.csv_files.get(file_idx) {
                 if grid.is_empty() { continue; }
@@ -264,13 +262,42 @@ impl CharterCsv {
                     };
                     *counts.entry(key).or_insert(0) += 1;
                 }
+
+
+                // Create header row
+                let mut header_row = Vec::new();
+                if let Some(group_cols) = group_by {
+                    // Add all group by columns to header
+                    header_row.extend(group_cols.iter().cloned());
+                } else {
+                    // If no group by, just use the column name
+                    header_row.push(column.to_string());
+                }
+                // Add count column
+                header_row.push("count".to_string());
+                query_grid.push(header_row.clone());
+                let _ = header_row.pop();
+                // Convert counts into data rows
+                for (key, count) in counts.drain() {
+                    let mut row = Vec::new();
+                    if key.contains('|') {
+                        // Split the composite key back into individual values
+                        let values: Vec<&str> = key.split('|').filter(|s| !s.is_empty()).collect();
+                        row.extend(values.iter().map(|&s| s.to_string()));
+                    } else {
+                        row.push(key);
+                    }
+                    // Add count
+                    row.push(count.to_string());
+                    query_grid.push(row);
+                }
             }
         }
-        println!("counts: {:?}", counts);
-        counts.into_iter().collect()
+
+        //counts.into_iter().collect()
+        query_grid
     }
 
-    // Comparison Operators
     fn filter_equals(&self, column: &str, value: &str) -> Vec<Vec<String>> {
         let mut result = Vec::new();
 
@@ -324,7 +351,7 @@ impl CharterCsv {
 
         result
     }
-
+    // todo several more operators to implement and tighten up current implementations (experimental)
     fn process_csvqb_pipeline(&self, qb_pipeline: &[String]) -> Vec<Value> {
         let mut stack: Vec<Value> = vec![];
         let mut results: Vec<Value> = Vec::new();
@@ -335,13 +362,12 @@ impl CharterCsv {
             match qb_pipeline[i].as_str() {
                 "GRP" => {
                     while i + 1 < qb_pipeline.len() {
-                        if ["GRP", "CSUM", "CCOUNT", "CAVG", "CMUL", "MUL"].contains(&qb_pipeline[i + 1].as_str()) {
+                        if ["GRP", "CSUM", "CCOUNT", "CAVG", "CMUL", "MUL", "=", "<", ">"].contains(&qb_pipeline[i + 1].as_str()) {
                             break;
                         }
                         capture_group.push(qb_pipeline[i + 1].clone());
                         i+=1
                     }
-                    println!("filter conditions: {:?}", capture_group);
                     i+=1
                 }
                 "CSUM" | "CCOUNT" | "CAVG" | "CMUL" => {
@@ -349,7 +375,6 @@ impl CharterCsv {
                         let field = &qb_pipeline[i + 1];
                         let operation = qb_pipeline[i].as_str();
 
-                        // Apply all accumulated filter conditions
                         let filter_condition = if !capture_group.is_empty() {
                             Some(capture_group.clone())
                         } else {
@@ -358,15 +383,15 @@ impl CharterCsv {
 
                         let result = match operation {
                             "CSUM" => {
-                                let sum = self.sum(field, filter_condition.as_deref());
+                                let sum = self.col_sum(field, filter_condition.as_deref());
                                 Value::Number(sum.iter().map(|(_, v)| v).sum())
                             }
                             "CCOUNT" => {
-                                let count = self.count(field, filter_condition.as_deref());
-                                Value::Number(count.len() as f64)
+                                let counts = self.col_count(field, filter_condition.as_deref());
+                                Value::QueryResult(counts)
                             }
                             "CAVG" => {
-                                let avg = self.average(field, filter_condition.as_deref());
+                                let avg = self.col_average(field, filter_condition.as_deref());
                                 let value = if !avg.is_empty() {
                                     avg.iter().map(|(_, v)| v).sum::<f64>() / avg.len() as f64
                                 } else {
@@ -377,11 +402,11 @@ impl CharterCsv {
                             "CMUL" => {
                                 println!("stack: {:?}", stack);
                                 if let Some(Value::Number(left)) = stack.pop() {
-                                    let mul = self.sum(field, filter_condition.as_deref());
+                                    let mul = self.col_sum(field, filter_condition.as_deref());
                                     println!("left: {:?}, mul: {:?}", left, mul);
                                     Value::Number(left * mul.iter().map(|(_, v)| v).product::<f64>())
                                 } else {
-                                    let mul = self.sum(field, filter_condition.as_deref());
+                                    let mul = self.col_sum(field, filter_condition.as_deref());
                                     println!("mul: {:?}", mul);
                                     Value::Number(mul.iter().map(|(_, v)| v).product::<f64>())
                                 }
@@ -398,14 +423,13 @@ impl CharterCsv {
                 "MUL" => {
                     println!("stack: {:?}", stack);
                     if let (Some(Value::Number(right)), Some(Value::Number(left))) = (stack.pop(), stack.pop()) {
-                        //let mul = self.sum(field, filter_condition.as_deref());
-                        println!("{:?} * {:?} =  {:?}", left, right, left * right);
-                        results.clear();
+                        stack.push(Value::Number(left * right));
                         results.push(Value::Number(left * right));
                     } else {
                         println!("err in MUL");
                         break;
                     }
+                    i+=1;
                 }
 
                 ">" | "<" | "=" => {
@@ -455,6 +479,7 @@ impl CharterCsv {
                             }
                             let result = self.process_csvqb_pipeline(&qb_pipeline[i+1..]);
                             println!("result: {},  {:?}", i, result);
+                            println!("stack: {},  {:?}", i, stack);
                             if !result.is_empty() {
                                 results.push(result[0].clone());
                                 break;
@@ -469,9 +494,9 @@ impl CharterCsv {
                     if let Ok(num) = qb_pipeline[i].parse::<f64>() {
                         stack.push(Value::Number(num));
                     }
-                    // else {
-                    //     stack.push(Value::Field(qb_pipeline[i].clone()));
-                    // }
+                    else {
+                        results.push(Value::Field(qb_pipeline[i].clone()));
+                    }
                     i+=1
                 }
             }
@@ -482,6 +507,92 @@ impl CharterCsv {
         }
 
         results
+    }
+
+    //experimental
+    fn fit_to_graph(&self) -> Result<(), String> {
+        #[derive(Debug)]
+        struct PlotPoint {
+            label: String,
+            value: f64,
+        }
+
+        let mut plot_data: Vec<PlotPoint> = Vec::new();
+
+        let mut i = 0;
+        while i < self.graph_data.len() {
+            match &self.graph_data[i] {
+                Value::Number(num) => {
+                    if i + 1 < self.graph_data.len() {
+                        if let Value::Field(label) = &self.graph_data[i + 1] {
+                            plot_data.push(PlotPoint {
+                                label: label.clone(),
+                                value: *num,
+                            });
+                            i += 2;
+                        } else {
+                            return Err("Expected Field after Number".to_string());
+                        }
+                    } else {
+                        return Err("Incomplete data: Number without a corresponding Field".to_string());
+                    }
+                }
+                Value::QueryResult(query_result) => {
+                    if query_result.is_empty() {
+                        return Err("QueryResult is empty".to_string());
+                    }
+
+                    let headers = &query_result[0];
+                    for row in query_result.iter().skip(1) {
+                        if row.len() < headers.len() {
+                            return Err("Mismatch in row and column sizes in QueryResult".to_string());
+                        }
+
+                        let label = row[..row.len() - 1].join(" ");
+                        if let Ok(last_value) = row.last().unwrap().parse::<f64>() {
+                            plot_data.push(PlotPoint {
+                                label,
+                                value: last_value,
+                            });
+                        } else {
+                            return Err("Failed to parse last column value as a number in QueryResult".to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            i += 1;
+        }
+
+        // todo experimental labeling
+        let axis_labels = if let Some(Value::QueryResult(query_result)) = self.graph_data.iter().find(|v| matches!(v, Value::QueryResult(_))) {
+            if !query_result.is_empty() {
+                let headers = &query_result[0];
+                if headers.len() > 1 {
+                    (headers[..headers.len() - 1].join(" "), headers.last().unwrap().to_string())
+                } else {
+                    ("X".to_string(), "Y".to_string()) // todo let user define x, y
+                }
+            } else {
+                ("X".to_string(), "Y".to_string()) // Default if malformed QueryResult
+            }
+        } else {
+            ("X".to_string(), "Y".to_string()) // Default if no QueryResult is present
+        };
+
+        // Mock visual
+        println!("Plotting graph with:");
+        println!("X-Axis Label: {}", axis_labels.0);
+        println!("Y-Axis Label: {}", axis_labels.1);
+
+        for point in &plot_data {
+            println!("Label: {}, Value: {}", point.label, point.value);
+        }
+
+        // todo draw graphs
+
+        Ok(())
     }
 
     // Render ui
@@ -808,13 +919,16 @@ impl CharterCsv {
                 for fields in self.csvqb_pipeline.iter() {
                     let result = self.process_csvqb_pipeline(fields);
                     if !result.is_empty() {
-                        println!("Result: {:?}", result);
+                        println!("Result: {:?}", &result);
+                        self.graph_data = result;
                     }
                 }
             }
 
             ui.label("Step 3. Fit data to chart:".to_string());
-            // todo Billy
+            if ui.button("create chart").clicked() {
+                self.fit_to_graph().expect("error fitting data to graph");
+            }
 
             if ui.button("Export Chart").clicked() {
                 // todo Billy
@@ -831,3 +945,6 @@ impl CharterCsv {
         });
     }
 }
+
+
+
