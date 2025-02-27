@@ -1,3 +1,6 @@
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
+use std::thread;
 use eframe::{egui, App};
 use eframe::emath::Vec2;
 use egui::{CentralPanel, ScrollArea};
@@ -29,6 +32,8 @@ struct CharterCsv {
     selected_csv_files: Vec<usize>,
     csvqb_pipeline: Vec<Vec<String>>,
     graph_data: Vec<Value>,
+    file_receiver: Receiver<(String, Vec<Vec<String>>)>,
+    file_sender: Sender<(String, Vec<Vec<String>>)>,
 }
 #[derive(Debug, Clone)]
 enum Value {
@@ -52,6 +57,7 @@ enum Operator {
 
 impl Default for CharterCsv {
     fn default() -> Self {
+        let (tx, rx) = mpsc::channel();
         Self {
             screen: Screen::Main,
             csv_files: vec![(
@@ -63,6 +69,8 @@ impl Default for CharterCsv {
             selected_csv_files: vec![],
             csvqb_pipeline: vec![],
             graph_data: vec![],
+            file_receiver: rx,
+            file_sender: tx,
         }
     }
 }
@@ -78,6 +86,9 @@ enum Screen {
 
 impl App for CharterCsv {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Ok((path, grid)) = self.file_receiver.try_recv() {
+            self.csv_files.push((path, grid));
+        }
         let screen = std::mem::replace(&mut self.screen, Screen::Main);
         match screen {
             Screen::Main => {
@@ -263,31 +274,26 @@ impl CharterCsv {
                     *counts.entry(key).or_insert(0) += 1;
                 }
 
-
-                // Create header row
                 let mut header_row = Vec::new();
                 if let Some(group_cols) = group_by {
-                    // Add all group by columns to header
                     header_row.extend(group_cols.iter().cloned());
                 } else {
-                    // If no group by, just use the column name
                     header_row.push(column.to_string());
                 }
-                // Add count column
+
                 header_row.push("count".to_string());
                 query_grid.push(header_row.clone());
                 let _ = header_row.pop();
-                // Convert counts into data rows
+
                 for (key, count) in counts.drain() {
                     let mut row = Vec::new();
                     if key.contains('|') {
-                        // Split the composite key back into individual values
                         let values: Vec<&str> = key.split('|').filter(|s| !s.is_empty()).collect();
                         row.extend(values.iter().map(|&s| s.to_string()));
                     } else {
                         row.push(key);
                     }
-                    // Add count
+
                     row.push(count.to_string());
                     query_grid.push(row);
                 }
@@ -606,10 +612,13 @@ impl CharterCsv {
                 if ui.add_sized(menu_btn_size, egui::Button::new("load CSV Files")).clicked() {
                     if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
                         let path_as_string = path.to_str().unwrap().to_string();
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            let grid: CsvGrid = CharterCsv::csv2grid(&content);
-                            self.csv_files.push((path_as_string, grid));
-                        }
+                        let sender = self.file_sender.clone();
+                        thread::spawn(move || {
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                let grid: CsvGrid = CharterCsv::csv2grid(&content);
+                                let _ = sender.send((path_as_string, grid));
+                            }
+                        });
                     }
                 }
 
