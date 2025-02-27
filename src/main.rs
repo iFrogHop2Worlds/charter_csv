@@ -3,6 +3,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use eframe::{egui, App};
 use eframe::emath::Vec2;
+use eframe::epaint::Color32;
 use egui::{CentralPanel, ScrollArea};
 
 fn main() {
@@ -34,6 +35,11 @@ struct CharterCsv {
     graph_data: Vec<Value>,
     file_receiver: Receiver<(String, Vec<Vec<String>>)>,
     file_sender: Sender<(String, Vec<Vec<String>>)>,
+}
+#[derive(Debug)]
+struct PlotPoint {
+    label: String,
+    value: f64,
 }
 #[derive(Debug, Clone)]
 enum Value {
@@ -516,13 +522,7 @@ impl CharterCsv {
     }
 
     //experimental
-    fn fit_to_graph(&self) -> Result<(), String> {
-        #[derive(Debug)]
-        struct PlotPoint {
-            label: String,
-            value: f64,
-        }
-
+    fn fit_to_graph(&self) -> Vec<PlotPoint> {
         let mut plot_data: Vec<PlotPoint> = Vec::new();
 
         let mut i = 0;
@@ -537,21 +537,21 @@ impl CharterCsv {
                             });
                             i += 2;
                         } else {
-                            return Err("Expected Field after Number".to_string());
+                            println!("{}", "Expected Field after Number".to_string());
                         }
                     } else {
-                        return Err("Incomplete data: Number without a corresponding Field".to_string());
+                        println!("{}", "Incomplete data: Number without a corresponding Field".to_string());
                     }
                 }
                 Value::QueryResult(query_result) => {
                     if query_result.is_empty() {
-                        return Err("QueryResult is empty".to_string());
+                        println!("{}", "QueryResult is empty".to_string());
                     }
 
                     let headers = &query_result[0];
                     for row in query_result.iter().skip(1) {
                         if row.len() < headers.len() {
-                            return Err("Mismatch in row and column sizes in QueryResult".to_string());
+                            println!("{}", "Mismatch in row and column sizes in QueryResult".to_string());
                         }
 
                         let label = row[..row.len() - 1].join(" ");
@@ -561,7 +561,7 @@ impl CharterCsv {
                                 value: last_value,
                             });
                         } else {
-                            return Err("Failed to parse last column value as a number in QueryResult".to_string());
+                            println!("{}", "Failed to parse last column value as a number in QueryResult".to_string());
                         }
                     }
                 }
@@ -572,33 +572,31 @@ impl CharterCsv {
         }
 
         // todo experimental labeling
-        let axis_labels = if let Some(Value::QueryResult(query_result)) = self.graph_data.iter().find(|v| matches!(v, Value::QueryResult(_))) {
-            if !query_result.is_empty() {
-                let headers = &query_result[0];
-                if headers.len() > 1 {
-                    (headers[..headers.len() - 1].join(" "), headers.last().unwrap().to_string())
-                } else {
-                    ("X".to_string(), "Y".to_string()) // todo let user define x, y
-                }
-            } else {
-                ("X".to_string(), "Y".to_string()) // Default if malformed QueryResult
-            }
-        } else {
-            ("X".to_string(), "Y".to_string()) // Default if no QueryResult is present
-        };
+        // let axis_labels = if let Some(Value::QueryResult(query_result)) = self.graph_data.iter().find(|v| matches!(v, Value::QueryResult(_))) {
+        //     if !query_result.is_empty() {
+        //         let headers = &query_result[0];
+        //         if headers.len() > 1 {
+        //             (headers[..headers.len() - 1].join(" "), headers.last().unwrap().to_string())
+        //         } else {
+        //             ("X".to_string(), "Y".to_string()) // todo let user define x, y
+        //         }
+        //     } else {
+        //         ("X".to_string(), "Y".to_string()) // Default if malformed QueryResult
+        //     }
+        // } else {
+        //     ("X".to_string(), "Y".to_string()) // Default if no QueryResult is present
+        // };
 
-        // Mock visual
-        println!("Plotting graph with:");
-        println!("X-Axis Label: {}", axis_labels.0);
-        println!("Y-Axis Label: {}", axis_labels.1);
+        // // Mock visual
+        // println!("Plotting graph with:");
+        // println!("X-Axis Label: {}", axis_labels.0);
+        // println!("Y-Axis Label: {}", axis_labels.1);
+        //
+        // for point in &plot_data {
+        //     println!("Label: {}, Value: {}", point.label, point.value);
+        // }
 
-        for point in &plot_data {
-            println!("Label: {}, Value: {}", point.label, point.value);
-        }
-
-        // todo draw graphs
-
-        Ok(())
+        return plot_data;
     }
 
     // Render ui
@@ -677,8 +675,7 @@ impl CharterCsv {
                 next_screen = Some(Screen::Main);
             }
         });
-
-        // Handle state changes after the UI
+        
         if let Some(index) = files_to_remove {
             self.csv_files.remove(index);
         }
@@ -748,14 +745,13 @@ impl CharterCsv {
                     let top_offset = start_row as f32 * ROW_HEIGHT;
                     ui.add_space(top_offset);
 
-                    // Only render valid rows
                     for row_idx in start_row..end_row {
                         let row = &mut grid[row_idx];
                         ui.horizontal(|ui| {
                             if start_col > 0 {
                                 ui.add_space(start_col as f32 * CELL_WIDTH);
                             }
-                            // Render visible cells
+
                             for col_idx in start_col..end_col {
                                 if col_idx < row.len() {
                                     let cell = &mut row[col_idx];
@@ -922,8 +918,7 @@ impl CharterCsv {
             if ui.button("reset query").clicked() {
                 self.csvqb_pipeline.clear();
             }
-            //let test_pipeline = vec![["MUL".to_string(),"SUM".to_string(), "qty".to_string(), "SUM".to_string(), "sold".to_string()]];
-            //let test_pipeline = vec![["SUM".to_string(), "qty".to_string(), "SUM".to_string(), "sold".to_string(), "MUL".to_string()]];
+
             if ui.button("Execute Expression").clicked() {
                 for fields in self.csvqb_pipeline.iter() {
                     let result = self.process_csvqb_pipeline(fields);
@@ -935,22 +930,83 @@ impl CharterCsv {
             }
 
             ui.label("Step 3. Fit data to chart:".to_string());
-            if ui.button("create chart").clicked() {
-                self.fit_to_graph().expect("error fitting data to graph");
+
+            if ui.button("view chart").clicked() {
+                self.screen = Screen::ViewChart;
             }
 
-            if ui.button("Export Chart").clicked() {
-                // todo Billy
-            }
+
         });
     }
 
     fn show_chart_screen(&mut self, ctx: &egui::Context, chart: &ChartGrid) {
         CentralPanel::default().show(ctx, |ui| {
             if ui.button("Back").clicked() {
-                self.screen = Screen::Main;
+                self.screen = Screen::CreateChart;
             }
-            ui.label("charts...");
+            let mut fit_data_to_graph = Some(self.fit_to_graph());
+
+            ui.horizontal(|ui| {
+                if let Some(graph_data) = fit_data_to_graph {
+                    let available_width = ui.available_width();
+                    let available_height:f64 = 600.0;
+                    let bar_spacing = 2.0;
+                    let values: Vec<f64> = graph_data.iter()
+                        .map(|data| data.value)
+                        .collect();
+                    let max_value = values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&1.0);
+                    let bar_width = (available_width / graph_data.len() as f32) - bar_spacing;
+
+                    let (response, painter) = ui.allocate_painter(
+                        egui::vec2(available_width, (available_height + 40.0) as f32), // Extra height for labels
+                        egui::Sense::hover(),
+                    );
+
+                    let rect = response.rect;
+
+                    painter.text(
+                        egui::pos2(rect.min.x - 40.0, rect.min.y + (available_height / 2.0) as f32),
+                        egui::Align2::CENTER_CENTER,
+                        "Count", // todo make dynamic labels
+                        egui::FontId::default(),
+                        Color32::WHITE,
+                    );
+
+                    for (i, (data, value)) in graph_data.iter().zip(values.iter()).enumerate() {
+                        let value_normalized = value / max_value;
+                        let height = value_normalized * available_height;
+                        let x = rect.min.x + (i as f32 * (bar_width + bar_spacing));
+
+                        let bar_rect = egui::Rect::from_min_size(
+                            egui::pos2(x, rect.max.y - (height - 20.0) as f32),
+                            egui::vec2(bar_width, height as f32),
+                        );
+
+                        painter.rect_filled(bar_rect, 0.0, Color32::from_rgb(65, 155, 220));
+
+                        painter.text(
+                            egui::pos2(x + bar_width / 2.0, bar_rect.min.y - 5.0),
+                            egui::Align2::CENTER_BOTTOM,
+                            format!("{:.0}", value),
+                            egui::FontId::default(),
+                            Color32::WHITE,
+                        );
+
+                        painter.text(
+                            egui::pos2(x + bar_width / 2.0, rect.max.y - 10.0),
+                            egui::Align2::CENTER_BOTTOM,
+                            &data.label,
+                            egui::FontId::default(),
+                            Color32::WHITE,
+                        );
+                    }
+                }
+            });
+
+
+            if ui.button("Export Chart").clicked() {
+                // todo Billy
+            }
         });
     }
 }
