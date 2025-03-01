@@ -1,3 +1,4 @@
+use egui::TextBuffer;
 use crate::utilities::CsvGrid;
 
 #[derive(Debug, Clone)]
@@ -25,9 +26,9 @@ pub fn col_sum(
     csv_files: &Vec<(String, CsvGrid)>,
     column: &str,
     group_by: Option<&[String]>
-) -> Vec<(String, f64)> {
+) -> Vec<Vec<String>> {
     let mut result = std::collections::HashMap::new();
-
+    let mut query_grid = Vec::new();
     for &file_idx in file_indexes {
         if let Some((_, grid)) = csv_files.get(file_idx) {
             if grid.is_empty() { continue; }
@@ -56,7 +57,7 @@ pub fn col_sum(
                         }
                         key
                     }
-                    None => "total".to_string(),
+                    None => "column sum".to_string(),
                 };
 
                 if let Ok(value) = row[col_idx].parse::<f64>() {
@@ -64,18 +65,43 @@ pub fn col_sum(
                 }
             }
         }
+        let mut header_row = Vec::new();
+        if let Some(group_cols) = group_by {
+            header_row.extend(group_cols.iter().cloned());
+        } else {
+            header_row.push(column.to_string());
+        }
+
+        header_row.push("sum".to_string());
+        query_grid.push(header_row.clone());
+        let _ = header_row.pop();
+
+        for (key, count) in result.drain() {
+            let mut row = Vec::new();
+            if key.contains('|') {
+                let values: Vec<&str> = key.split('|').filter(|s| !s.is_empty()).collect();
+                row.extend(values.iter().map(|&s| s.to_string()));
+            } else {
+                row.push(key);
+            }
+
+            row.push(count.to_string());
+            query_grid.push(row);
+        }
+
     }
 
-    result.into_iter().collect()
+    query_grid
 }
 fn col_average(
     file_indexes: &Vec<usize>,
     csv_files: &Vec<(String, CsvGrid)>,
     column: &str,
     group_by: Option<&[String]>
-) -> Vec<(String, f64)> {
+) -> Vec<Vec<String>> {
     let mut sums = std::collections::HashMap::new();
     let mut counts = std::collections::HashMap::new();
+    let mut query_grid = Vec::new();
 
     for &file_idx in file_indexes {
         if let Some((_, grid)) = csv_files.get(file_idx) {
@@ -103,7 +129,7 @@ fn col_average(
                         }
                         key
                     }
-                    None => "total".to_string(),
+                    None => "average".to_string(),
                 };
 
                 if let Ok(value) = row[col_idx].parse::<f64>() {
@@ -114,13 +140,38 @@ fn col_average(
         }
     }
 
-    sums.into_iter()
+    sums = sums.into_iter()
         .filter_map(|(key, sum)| {
             counts.get(&key).map(|&count| {
                 (key, sum / count as f64)
             })
         })
-        .collect()
+        .collect();
+
+    let mut header_row = Vec::new();
+    if let Some(group_cols) = group_by {
+        header_row.extend(group_cols.iter().cloned());
+    } else {
+        header_row.push(column.to_string());
+    }
+
+    header_row.push("average".to_string());
+    query_grid.push(header_row.clone());
+    let _ = header_row.pop();
+
+    for (key, count) in sums.drain() {
+        let mut row = Vec::new();
+        if key.contains('|') {
+            let values: Vec<&str> = key.split('|').filter(|s| !s.is_empty()).collect();
+            row.extend(values.iter().map(|&s| s.to_string()));
+        } else {
+            row.push(key);
+        }
+
+        row.push(count.to_string());
+        query_grid.push(row);
+    }
+    query_grid
 }
 
 fn col_count(
@@ -256,7 +307,11 @@ fn filter_greater_than(
     result
 }
 
-pub fn process_csvqb_pipeline(qb_pipeline: &[String], file_indexes: &Vec<usize>, files: &Vec<(String, CsvGrid)>) -> Vec<Value> {
+pub fn process_csvqb_pipeline(
+    qb_pipeline: &[String],
+    file_indexes: &Vec<usize>,
+    files: &Vec<(String, CsvGrid)>
+) -> Vec<Value> {
     let mut stack: Vec<Value> = vec![];
     let mut results: Vec<Value> = Vec::new();
     let mut capture_group: Vec<String> = Vec::new();
@@ -266,7 +321,7 @@ pub fn process_csvqb_pipeline(qb_pipeline: &[String], file_indexes: &Vec<usize>,
         match qb_pipeline[i].as_str() {
             "GRP" => {
                 while i + 1 < qb_pipeline.len() {
-                    if ["GRP", "CSUM", "CCOUNT", "CAVG", "CMUL", "MUL", "=", "<", ">"].contains(&qb_pipeline[i + 1].as_str()) {
+                    if ["GRP", "CSUM", "CCOUNT", "CAVG", "MUL", "=", "<", ">"].contains(&qb_pipeline[i + 1].as_str()) {
                         break;
                     }
                     capture_group.push(qb_pipeline[i + 1].clone());
@@ -274,7 +329,7 @@ pub fn process_csvqb_pipeline(qb_pipeline: &[String], file_indexes: &Vec<usize>,
                 }
                 i+=1
             }
-            "CSUM" | "CCOUNT" | "CAVG" | "CMUL" => {
+            "CSUM" | "CCOUNT" | "CAVG" => {
                 if i + 1 < qb_pipeline.len() {
                     let field = &qb_pipeline[i + 1];
                     let operation = qb_pipeline[i].as_str();
@@ -288,7 +343,7 @@ pub fn process_csvqb_pipeline(qb_pipeline: &[String], file_indexes: &Vec<usize>,
                     let result = match operation {
                         "CSUM" => {
                             let sum = col_sum(file_indexes, files, field, filter_condition.as_deref());
-                            Value::Number(sum.iter().map(|(_, v)| v).sum())
+                            Value::QueryResult(sum)
                         }
                         "CCOUNT" => {
                             let counts = col_count(file_indexes, files, field, filter_condition.as_deref());
@@ -296,24 +351,7 @@ pub fn process_csvqb_pipeline(qb_pipeline: &[String], file_indexes: &Vec<usize>,
                         }
                         "CAVG" => {
                             let avg = col_average(file_indexes, files, field, filter_condition.as_deref());
-                            let value = if !avg.is_empty() {
-                                avg.iter().map(|(_, v)| v).sum::<f64>() / avg.len() as f64
-                            } else {
-                                0.0
-                            };
-                            Value::Number(value)
-                        }
-                        "CMUL" => {
-                            println!("stack: {:?}", stack);
-                            if let Some(Value::Number(left)) = stack.pop() {
-                                let mul = col_sum(file_indexes, files, field, filter_condition.as_deref());
-                                println!("left: {:?}, mul: {:?}", left, mul);
-                                Value::Number(left * mul.iter().map(|(_, v)| v).product::<f64>())
-                            } else {
-                                let mul = col_sum(file_indexes, files, field, filter_condition.as_deref());
-                                println!("mul: {:?}", mul);
-                                Value::Number(mul.iter().map(|(_, v)| v).product::<f64>())
-                            }
+                            Value::QueryResult(avg)
                         }
 
                         _ => unreachable!()
@@ -326,9 +364,12 @@ pub fn process_csvqb_pipeline(qb_pipeline: &[String], file_indexes: &Vec<usize>,
             }
             "MUL" => {
                 println!("stack: {:?}", stack);
-                if let (Some(Value::Number(right)), Some(Value::Number(left))) = (stack.pop(), stack.pop()) {
-                    stack.push(Value::Number(left * right));
-                    results.push(Value::Number(left * right));
+                if let (Some(Value::QueryResult(right)), Some(Value::QueryResult(left))) = (stack.pop(), stack.pop()) {
+                    if let (Ok(left_val), Ok(right_val)) = (left[1][1].parse::<f64>(), right[1][1].parse::<f64>()) {
+                        stack.push(Value::Number(left_val * right_val));
+                        results.push(Value::Number(left_val * right_val));
+                        results.push(Value::Field(left[0][0].clone() + " * ".as_str() + &right[0][0]));
+                    }
                 } else {
                     println!("err in MUL");
                     break;
@@ -340,7 +381,7 @@ pub fn process_csvqb_pipeline(qb_pipeline: &[String], file_indexes: &Vec<usize>,
                 if stack.len() >= 2 {
                     let right = stack.pop().unwrap();
                     let left = stack.pop().unwrap();
-                    println!("right: {:?}, left: {:?}", right, left);
+                    println!("left: {:?}, right: {:?}", left, right);
                     match qb_pipeline[i].as_str() {
                         ">" => {
                             let comparison = match (left, right) {

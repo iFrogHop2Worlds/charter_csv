@@ -1,5 +1,7 @@
+#![feature(str_as_str)]
+
 pub use eframe::{egui, App};
-pub use egui::*;
+use egui::{Context, ViewportBuilder};
 pub mod csvqb;
 pub mod utilities;
 mod charter_csv;

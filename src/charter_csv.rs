@@ -181,7 +181,12 @@ impl CharterCsv {
         }
     }
 
-    fn show_csv_editor(&mut self, ctx: &Context, content: &mut (String, CsvGrid), edit_index: Option<usize>) -> Option<Screen> {
+    fn show_csv_editor(
+        &mut self,
+        ctx: &Context,
+        content: &mut (String, CsvGrid),
+        edit_index: Option<usize>
+    ) -> Option<Screen> {
         let mut next_screen = None;
         CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -371,13 +376,6 @@ impl CharterCsv {
                             self.csvqb_pipeline[index].push("CCOUNT".to_string());
                         } else {
                             self.csvqb_pipeline.push(vec!["CCOUNT".to_string()]);
-                        }
-                    }
-                    if ui.button("CMUL").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push("CMUL".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec!["CMUL".to_string()]);
                         }
                     }
                     if ui.button("MUL").clicked() {

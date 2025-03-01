@@ -15,7 +15,13 @@ pub fn grid2csv(grid: &CsvGrid) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
-pub fn draw_rotated_text(painter: &Painter, rect: Rect, data_label: &str, x: f32, bar_width: f32) -> Vec<Shape> {
+pub fn draw_rotated_text(
+    painter: &Painter,
+    rect: Rect,
+    data_label: &str,
+    x: f32,
+    bar_width: f32
+) -> Vec<Shape> {
     let text = WidgetText::from(data_label);
     let galley = painter.layout_no_wrap(
         text.text().to_string(),
