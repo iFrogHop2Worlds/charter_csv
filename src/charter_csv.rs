@@ -1,12 +1,15 @@
+use eframe::App;
+use egui::{pos2, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, Image, Rect, RichText, ScrollArea, Sense, TextEdit, TextureHandle, Vec2, ViewportCommand};
+use crate::utilities::{csv2grid, draw_rotated_text, grid2csv, CsvGrid};
+use crate::csvqb::{process_csvqb_pipeline, Value};
 pub use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
-use eframe::App;
-use egui::{pos2, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, Rect, ScrollArea, Sense, TextEdit, Vec2, ViewportCommand};
-use crate::utilities::{csv2grid, draw_rotated_text, grid2csv, CsvGrid};
-use crate::csvqb::{process_csvqb_pipeline, Value};
+use image::ImageReader;
+use image::GenericImageView;
 
 pub struct CharterCsv {
+    texture: Option<TextureHandle>,
     pub screen: Screen,
     pub csv_files: Vec<(String, CsvGrid)>,
     pub selected_csv_files: Vec<usize>,
@@ -35,6 +38,7 @@ impl Default for CharterCsv {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
+            texture: None,
             screen: Screen::Main,
             csv_files: vec![(
                 "product_sheet.csv".to_string(),
@@ -60,7 +64,7 @@ impl App for CharterCsv {
         match screen {
             Screen::Main => {
                 self.screen = screen;
-                self.show_main_screen(ctx, _frame)
+                self.show_main_screen(ctx)
             }
             Screen::ViewCsv => {
                 self.screen = screen;
@@ -97,12 +101,71 @@ impl App for CharterCsv {
     }
 }
 impl CharterCsv {
-    fn show_main_screen(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
-        CentralPanel::default().show(ctx, |ui| {
+    fn show_main_screen(&mut self, ctx: &Context) {
+        let frame = egui::Frame::default()
+            .fill(egui::Color32::from_rgb(67, 143, 173));
+
+        CentralPanel::default().frame(frame).show(ctx, |ui| {
+            let texture: &mut TextureHandle = self.texture.get_or_insert_with(|| {
+                match ImageReader::open("src/sailboat.png") {
+                    Ok(img) => {
+                        match img.decode() {
+                            Ok(image) => {
+                                let image_buffer = image.to_rgba8();
+                                let size = [image_buffer.width() as _, image_buffer.height() as _];
+                                let pixels = image_buffer.as_raw();
+                                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                    size,
+                                    pixels,
+                                );
+
+                                ctx.load_texture(
+                                    "sailboat",
+                                    color_image,
+                                    egui::TextureOptions::default(),
+                                )
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to decode image: {:?}", e);
+                                let color_image = egui::ColorImage::new([16, 16], egui::Color32::RED);
+                                ctx.load_texture(
+                                    "error_placeholder",
+                                    color_image,
+                                    egui::TextureOptions::default(),
+                                )
+                            }
+                        }
+                    }
+                    _ => {
+                        let color_image = egui::ColorImage::new([16, 16], egui::Color32::RED);
+                        ctx.load_texture(
+                            "error_placeholder",
+                            color_image,
+                            egui::TextureOptions::default(),
+                        )
+                    }
+                }
+            });
+
+            let total_size = ui.available_size();
+            let content_height = ui.allocate_ui(Vec2::new(total_size.x, total_size.y), |ui| {
+                ui.vertical_centered(|ui| {});
+                ui.min_rect().height()
+            }).inner;
+
+            let top_margin: f32 = 25.0;
+            ui.add_space(top_margin.max(0.0));
+
             ui.vertical_centered(|ui| {
-                ui.heading("Charter CSV");
-                ui.label("Create charts from CSV files for analysis");
+                ui.add(
+                    Image::new(&*texture)
+                        .max_width(200.0)
+                );
                 ui.add_space(20.0);
+                ui.heading(RichText::new("Charter CSV").color(egui::Color32::BLACK));
+                ui.label(RichText::new("navigate your data with speed and precision").color(egui::Color32::BLACK));
+                ui.add_space(20.0);
+
                 let menu_btn_size = Vec2::new(300.0, 30.0);
                 if ui.add_sized(menu_btn_size, Button::new("load CSV Files")).clicked() {
                     if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
@@ -146,10 +209,12 @@ impl CharterCsv {
     }
 
     fn show_csv_list(&mut self, ctx: &Context) {
+        let frame = egui::Frame::default()
+            .fill(egui::Color32::from_rgb(67, 143, 173));
         let mut files_to_remove: Option<usize> = None;
         let mut next_screen: Option<Screen> = None;
 
-        CentralPanel::default().show(ctx, |ui| {
+        CentralPanel::default().frame(frame).show(ctx, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
                 for (index, file) in self.csv_files.iter().enumerate() {
                     let file_name = file.0.split("\\").last().unwrap_or("No file name");
@@ -187,8 +252,10 @@ impl CharterCsv {
         content: &mut (String, CsvGrid),
         edit_index: Option<usize>
     ) -> Option<Screen> {
+        let frame = egui::Frame::default()
+            .fill(egui::Color32::from_rgb(67, 143, 173));
         let mut next_screen = None;
-        CentralPanel::default().show(ctx, |ui| {
+        CentralPanel::default().frame(frame).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Save").clicked() {
                     if let Some(index) = edit_index {
@@ -277,7 +344,9 @@ impl CharterCsv {
     }
 
     fn create_chart_screen(&mut self, ctx: &Context) {
-        CentralPanel::default().show(ctx, |ui| {
+        let frame = egui::Frame::default()
+            .fill(egui::Color32::from_rgb(67, 143, 173));
+        CentralPanel::default().frame(frame).show(ctx, |ui| {
             if ui.button("Back").clicked() {
                 self.screen = Screen::Main;
             }
@@ -436,7 +505,10 @@ impl CharterCsv {
     }
 
     fn show_chart_screen(&mut self, ctx: &Context) {
-        CentralPanel::default().show(ctx, |ui| {
+        let frame = egui::Frame::default()
+            .fill(egui::Color32::from_rgb(67, 143, 173));
+
+        CentralPanel::default().frame(frame).show(ctx, |ui| {
             if ui.button("Back").clicked() {
                 self.screen = Screen::CreateChart;
             }

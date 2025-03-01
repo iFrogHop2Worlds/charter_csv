@@ -21,7 +21,15 @@ fn main() {
     eframe::run_native(
         "CharterCSV",
         options,
-        Box::new(|_cc| Ok(Box::new(CharterCsv::default()))),
+        Box::new(|cc| {
+            // let mut visuals = cc.egui_ctx.style().visuals.clone();
+            // visuals.window_fill = egui::Color32::from_rgb(32, 32, 32);
+            // visuals.panel_fill = egui::Color32::from_rgb(32, 32, 32);
+            // visuals.override_text_color = Some(egui::Color32::BLACK);
+            // cc.egui_ctx.set_visuals(visuals);
+
+            Ok(Box::new(CharterCsv::default()))
+        }),
     )
         .expect("Unexpected error in running the application");
 }
