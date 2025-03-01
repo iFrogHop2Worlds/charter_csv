@@ -1,18 +1,17 @@
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
-use eframe::{egui, App};
-use eframe::emath::Vec2;
-use eframe::epaint::Color32;
-use egui::{CentralPanel, ScrollArea};
+use eframe::{egui, emath, App};
+use egui::*;
+use egui::epaint::TextShape;
 
 fn main() {
-    let ctx = egui::Context::default();
+    let ctx = Context::default();
     let mut size = ctx.used_size();
     size.x = 780.00;
     size.y = 420.00;
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+        viewport: ViewportBuilder::default()
             .with_resizable(true)
             .with_inner_size(size),
         ..Default::default()
@@ -91,7 +90,7 @@ enum Screen {
 }
 
 impl App for CharterCsv {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         if let Ok((path, grid)) = self.file_receiver.try_recv() {
             self.csv_files.push((path, grid));
         }
@@ -150,6 +149,31 @@ impl CharterCsv {
             .map(|row| row.join(","))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+    fn draw_rotated_text(painter: &Painter, rect: Rect, data_label: &str, x: f32, bar_width: f32) -> Vec<Shape> {
+        let text = WidgetText::from(data_label);
+        let galley = painter.layout_no_wrap(
+            text.text().to_string(),
+            FontId::default(),
+            Color32::BLACK,
+        );
+
+        let pos = pos2(x + bar_width / 2.0, rect.max.y / 2.0);
+        let rot = emath::Rot2::from_angle(std::f32::consts::FRAC_PI_2 * 2.99);
+
+        let offset = vec2(-galley.size().y / 2.0, -galley.size().x / 2.0);
+        let rotated_offset = rot * offset;
+        let final_pos = pos + rotated_offset;
+
+        vec![Shape::Text(TextShape {
+            pos: final_pos,
+            galley: galley.clone(),
+            angle: std::f32::consts::FRAC_PI_2 * 2.99,
+            underline: Stroke::NONE,
+            fallback_color: Color32::BLACK,
+            override_text_color: Some(Color32::BLACK),
+            opacity_factor: 1.0,
+        })]
     }
 
     fn col_sum(&self, column: &str, group_by: Option<&[String]>) -> Vec<(String, f64)> {
@@ -600,14 +624,14 @@ impl CharterCsv {
     }
 
     // Render ui
-    fn show_main_screen(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn show_main_screen(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         CentralPanel::default().show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.heading("Charter CSV");
                 ui.label("Create charts from CSV files for analysis");
                 ui.add_space(20.0);
-                let menu_btn_size = egui::Vec2::new(300.0, 30.0);
-                if ui.add_sized(menu_btn_size, egui::Button::new("load CSV Files")).clicked() {
+                let menu_btn_size = Vec2::new(300.0, 30.0);
+                if ui.add_sized(menu_btn_size, Button::new("load CSV Files")).clicked() {
                     if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
                         let path_as_string = path.to_str().unwrap().to_string();
                         let sender = self.file_sender.clone();
@@ -620,11 +644,11 @@ impl CharterCsv {
                     }
                 }
 
-                if ui.add_sized(menu_btn_size, egui::Button::new("View All CSV Files")).clicked() {
+                if ui.add_sized(menu_btn_size, Button::new("View All CSV Files")).clicked() {
                     self.screen = Screen::ViewCsv;
                 }
 
-                if ui.add_sized(menu_btn_size, egui::Button::new("Create New CSV File")).clicked() {
+                if ui.add_sized(menu_btn_size, Button::new("Create New CSV File")).clicked() {
                     self.screen = Screen::CreateCsv {
                         content: (
                             "/todo/setpath".to_string(),
@@ -633,22 +657,22 @@ impl CharterCsv {
                     };
                 }
 
-                if ui.add_sized(menu_btn_size, egui::Button::new("Create Chart")).clicked() {
+                if ui.add_sized(menu_btn_size, Button::new("Create Chart")).clicked() {
                     self.screen = Screen::CreateChart;
                 }
 
-                if ui.add_sized(menu_btn_size, egui::Button::new("View All Charts")).clicked() {
+                if ui.add_sized(menu_btn_size, Button::new("View All Charts")).clicked() {
                     self.screen = Screen::ViewChart;
                 }
 
-                if ui.add_sized(menu_btn_size, egui::Button::new("Close Program")).clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                if ui.add_sized(menu_btn_size, Button::new("Close Program")).clicked() {
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
             });
         });
     }
 
-    fn show_csv_list(&mut self, ctx: &egui::Context) {
+    fn show_csv_list(&mut self, ctx: &Context) {
         let mut files_to_remove: Option<usize> = None;
         let mut next_screen: Option<Screen> = None;
 
@@ -675,7 +699,7 @@ impl CharterCsv {
                 next_screen = Some(Screen::Main);
             }
         });
-        
+
         if let Some(index) = files_to_remove {
             self.csv_files.remove(index);
         }
@@ -684,7 +708,7 @@ impl CharterCsv {
         }
     }
 
-    fn show_csv_editor(&mut self, ctx: &egui::Context, content: &mut (String, CsvGrid), edit_index: Option<usize>) -> Option<Screen> {
+    fn show_csv_editor(&mut self, ctx: &Context, content: &mut (String, CsvGrid), edit_index: Option<usize>) -> Option<Screen> {
         let mut next_screen = None;
         CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -757,7 +781,7 @@ impl CharterCsv {
                                     let cell = &mut row[col_idx];
                                     ui.add_sized(
                                         Vec2::new(CELL_WIDTH, ROW_HEIGHT),
-                                        egui::TextEdit::singleline(cell)
+                                        TextEdit::singleline(cell)
                                     );
                                 }
                             }
@@ -774,7 +798,7 @@ impl CharterCsv {
         next_screen
     }
 
-    fn create_chart_screen(&mut self, ctx: &egui::Context) {
+    fn create_chart_screen(&mut self, ctx: &Context) {
         CentralPanel::default().show(ctx, |ui| {
             if ui.button("Back").clicked() {
                 self.screen = Screen::Main;
@@ -939,70 +963,55 @@ impl CharterCsv {
         });
     }
 
-    fn show_chart_screen(&mut self, ctx: &egui::Context, chart: &ChartGrid) {
+    fn show_chart_screen(&mut self, ctx: &Context, chart: &ChartGrid) {
         CentralPanel::default().show(ctx, |ui| {
             if ui.button("Back").clicked() {
                 self.screen = Screen::CreateChart;
             }
             let mut fit_data_to_graph = Some(self.fit_to_graph());
-
-            ui.horizontal(|ui| {
+            ScrollArea::horizontal().show(ui, |ui|{
                 if let Some(graph_data) = fit_data_to_graph {
-                    let available_width = ui.available_width();
+                    let available_width = ui.available_width() * (ui.available_width() / graph_data.len() as f32);
                     let available_height:f64 = 600.0;
                     let bar_spacing = 2.0;
                     let values: Vec<f64> = graph_data.iter()
                         .map(|data| data.value)
                         .collect();
                     let max_value = values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&1.0);
-                    let bar_width = (available_width / graph_data.len() as f32) - bar_spacing;
-
+                    let bar_width = (ui.available_width() / graph_data.len() as f32);
                     let (response, painter) = ui.allocate_painter(
-                        egui::vec2(available_width, (available_height + 40.0) as f32), // Extra height for labels
-                        egui::Sense::hover(),
+                        vec2(available_width, (available_height + 40.0) as f32),
+                        Sense::hover(),
                     );
-
                     let rect = response.rect;
-
                     painter.text(
-                        egui::pos2(rect.min.x - 40.0, rect.min.y + (available_height / 2.0) as f32),
-                        egui::Align2::CENTER_CENTER,
+                        pos2(rect.min.x - 40.0, rect.min.y + (available_height / 2.0) as f32),
+                        Align2::CENTER_CENTER,
                         "Count", // todo make dynamic labels
-                        egui::FontId::default(),
+                        FontId::default(),
                         Color32::WHITE,
                     );
-
                     for (i, (data, value)) in graph_data.iter().zip(values.iter()).enumerate() {
                         let value_normalized = value / max_value;
                         let height = value_normalized * available_height;
                         let x = rect.min.x + (i as f32 * (bar_width + bar_spacing));
-
-                        let bar_rect = egui::Rect::from_min_size(
-                            egui::pos2(x, rect.max.y - (height - 20.0) as f32),
-                            egui::vec2(bar_width, height as f32),
+                        let bar_rect = Rect::from_min_size(
+                            pos2(x, rect.max.y - (height - 20.0) as f32),
+                            vec2(bar_width, height as f32),
                         );
-
                         painter.rect_filled(bar_rect, 0.0, Color32::from_rgb(65, 155, 220));
-
                         painter.text(
-                            egui::pos2(x + bar_width / 2.0, bar_rect.min.y - 5.0),
-                            egui::Align2::CENTER_BOTTOM,
+                            pos2(x + bar_width / 2.0, bar_rect.min.y - 5.0),
+                            Align2::CENTER_BOTTOM,
                             format!("{:.0}", value),
-                            egui::FontId::default(),
-                            Color32::WHITE,
+                            FontId::default(),
+                            Color32::BLACK,
                         );
-
-                        painter.text(
-                            egui::pos2(x + bar_width / 2.0, rect.max.y - 10.0),
-                            egui::Align2::CENTER_BOTTOM,
-                            &data.label,
-                            egui::FontId::default(),
-                            Color32::WHITE,
-                        );
+                        let shapes = CharterCsv::draw_rotated_text(&painter, rect, &data.label, x, bar_width);
+                        ui.painter_at(rect).extend(shapes);
                     }
                 }
             });
-
 
             if ui.button("Export Chart").clicked() {
                 // todo Billy
