@@ -1,6 +1,6 @@
 use eframe::App;
-use egui::{pos2, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, Image, Rect, RichText, ScrollArea, Sense, TextEdit, TextureHandle, Vec2, ViewportCommand};
-use crate::utilities::{csv2grid, draw_rotated_text, grid2csv, CsvGrid};
+use egui::{pos2, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, IconData, Image, Rect, RichText, ScrollArea, Sense, TextEdit, TextureHandle, Vec2, ViewportCommand};
+use crate::charter_utilities::{csv2grid, draw_rotated_text, grid2csv, CsvGrid};
 use crate::csvqb::{process_csvqb_pipeline, Value};
 pub use std::thread;
 use std::sync::mpsc;
@@ -37,7 +37,7 @@ pub struct PlotPoint {
 impl Default for CharterCsv {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
-        Self {
+        let mut app = Self {
             texture: None,
             screen: Screen::Main,
             csv_files: vec![(
@@ -50,8 +50,32 @@ impl Default for CharterCsv {
             csvqb_pipeline: vec![],
             graph_data: vec![],
             file_receiver: rx,
-            file_sender: tx,
+            file_sender: tx, // Initialize icon_data to None here as well, if not using Default
+        };
+        match ImageReader::open("src/sailboat.png") { // Assuming your icon is in "assets" folder
+            Ok(image_reader) => {
+                match image_reader.decode() {
+                    Ok(image) => {
+                        let image_buffer = image.to_rgba8();
+                        let pixels = image_buffer.into_raw();
+                        let size = [image.width(), image.height()];
+                        let icon_data = IconData {
+                            rgba: pixels,
+                            width: size[0],
+                            height: size[1],
+                        };
+                        Some(icon_data); // Store the IconData in your app struct
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to decode app icon: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to open app icon file: {}", e);
+            }
         }
+        app
     }
 }
 
@@ -60,6 +84,7 @@ impl App for CharterCsv {
         if let Ok((path, grid)) = self.file_receiver.try_recv() {
             self.csv_files.push((path, grid));
         }
+
         let screen = std::mem::replace(&mut self.screen, Screen::Main);
         match screen {
             Screen::Main => {
@@ -385,10 +410,10 @@ impl CharterCsv {
                 for (index, fields) in csv_columns.iter().enumerate() {
                     ui.push_id(index, |ui| {
                         ui.group(|ui| {
-                            ui.set_min_size(Vec2::new(380.0, 150.0));
+                            ui.set_min_size(Vec2::new(300.0, 100.0));
                             ScrollArea::both()
-                                .max_height(150.0)
-                                .max_width(380.0)
+                                .max_height(100.0)
+                                .max_width(300.0)
                                 .show(ui, |ui| {
                                     ui.horizontal_wrapped(|ui| {
                                         for field in fields.iter() {

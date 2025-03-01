@@ -1,5 +1,5 @@
 use egui::TextBuffer;
-use crate::utilities::CsvGrid;
+use crate::charter_utilities::CsvGrid;
 
 #[derive(Debug, Clone)]
 pub enum Value {
