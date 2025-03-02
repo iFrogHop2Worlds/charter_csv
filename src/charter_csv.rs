@@ -1,6 +1,6 @@
 use eframe::App;
 use egui::{Ui, pos2, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, IconData, Image, Rect, RichText, ScrollArea, Sense, TextEdit, TextureHandle, Vec2, ViewportCommand};
-use crate::charter_utilities::{csv2grid, draw_rotated_text, grid2csv, CsvGrid};
+use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, draw_bar_graph};
 use crate::csvqb::{process_csvqb_pipeline, Value};
 pub use std::thread;
 use std::sync::mpsc;
@@ -31,8 +31,8 @@ pub enum Screen {
 
 #[derive(Debug)]
 pub struct PlotPoint {
-    label: String,
-    value: f64,
+    pub(crate) label: String,
+    pub(crate) value: f64,
 }
 
 impl Default for CharterCsv {
@@ -395,6 +395,7 @@ impl CharterCsv {
                 });
                 if ui.button("reset query").clicked() {
                     self.csvqb_pipeline.clear();
+                    self.graph_data.clear();
                 }
                 if ui.button("Execute Expression").clicked() {
                     for fields in self.csvqb_pipeline.iter() {
@@ -550,7 +551,7 @@ impl CharterCsv {
                 });
                 ui.vertical_centered_justified(|ui| {
                     ui.heading(RichText::new("Pipeline output").color(Color32::BLACK));
-                    let formatted_data = &self.graph_data;  
+                    let formatted_data = &self.graph_data;
                     ScrollArea::vertical().show(ui, |ui: &mut Ui| {
                         for row in formatted_data {
                             ui.vertical(|ui| {
@@ -571,132 +572,14 @@ impl CharterCsv {
             if ui.button("Back").clicked() {
                 self.screen = Screen::CreateChart;
             }
-            let mut formatted_data = Some(self.format_graph_query());
-            ScrollArea::horizontal().show(ui, |ui|{
-                if let Some(graph_data) = formatted_data {
-                    let available_width = ui.available_width() * (ui.available_width() / graph_data.len() as f32);
-                    let available_height:f64 = 600.0;
-                    let bar_spacing = 2.0;
-                    let values: Vec<f64> = graph_data.iter()
-                        .map(|data| data.value)
-                        .collect();
-                    let max_value = values.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(&1.0);
-                    let bar_width = (ui.available_width() / graph_data.len() as f32);
-                    let (response, painter) = ui.allocate_painter(
-                        vec2(available_width, (available_height + 40.0) as f32),
-                        Sense::hover(),
-                    );
-                    let rect = response.rect;
-                    painter.text(
-                        pos2(rect.min.x - 40.0, rect.min.y + (available_height / 2.0) as f32),
-                        Align2::CENTER_CENTER,
-                        "Count", // todo make dynamic labels
-                        FontId::default(),
-                        Color32::BLACK,
-                    );
-                    for (i, (data, value)) in graph_data.iter().zip(values.iter()).enumerate() {
-                        let value_normalized = value / max_value;
-                        let height = value_normalized * available_height;
-                        let x = rect.min.x + (i as f32 * (bar_width + bar_spacing));
-                        let bar_rect = Rect::from_min_size(
-                            pos2(x, rect.max.y - (height - 20.0) as f32),
-                            vec2(bar_width, height as f32),
-                        );
-                        painter.rect_filled(bar_rect, 0.0, Color32::from_rgb(65, 155, 220));
-                        painter.text(
-                            pos2(x + bar_width / 2.0, bar_rect.min.y - 5.0),
-                            Align2::CENTER_BOTTOM,
-                            format!("{:.0}", value),
-                            FontId::default(),
-                            Color32::BLACK,
-                        );
-                        let shapes = draw_rotated_text(&painter, rect, &data.label, x, bar_width);
-                        ui.painter_at(rect).extend(shapes);
-                    }
-                }
-            });
+
+            let mut formatted_data = Some(format_graph_query(self.graph_data.clone()));
+            let _ = draw_bar_graph(ui, formatted_data);
+
 
             if ui.button("Export Chart").clicked() {
                 // todo Billy
             }
         });
-    }
-
-    // experimenting graph data
-    fn format_graph_query(&self) -> Vec<PlotPoint> {
-        let mut plot_data: Vec<PlotPoint> = Vec::new();
-
-        let mut i = 0;
-        while i < self.graph_data.len() {
-            match &self.graph_data[i] {
-                Value::Number(num) => {
-                    if i + 1 < self.graph_data.len() {
-                        if let Value::Field(label) = &self.graph_data[i + 1] {
-                            plot_data.push(PlotPoint {
-                                label: label.clone(),
-                                value: *num,
-                            });
-                            i += 2;
-                        } else {
-                            println!("{}", "Expected Field after Number".to_string());
-                        }
-                    } else {
-                        println!("{}", "Incomplete data: Number without a corresponding Field".to_string());
-                    }
-                }
-                Value::QueryResult(query_result) => {
-                    if query_result.is_empty() {
-                        println!("{}", "QueryResult is empty".to_string());
-                    }
-
-                    let headers = &query_result[0];
-                    for row in query_result.iter().skip(1) {
-                        if row.len() < headers.len() {
-                            println!("{}", "Mismatch in row and column sizes in QueryResult".to_string());
-                        }
-
-                        let label = row[..row.len() - 1].join(" ");
-                        if let Ok(last_value) = row.last().unwrap().parse::<f64>() {
-                            plot_data.push(PlotPoint {
-                                label,
-                                value: last_value,
-                            });
-                        } else {
-                            println!("{}", "Failed to parse last column value as a number in QueryResult".to_string());
-                        }
-                    }
-                }
-                _ => {}
-            }
-
-            i += 1;
-        }
-
-        // todo experimental labeling
-        // let axis_labels = if let Some(Value::QueryResult(query_result)) = self.graph_data.iter().find(|v| matches!(v, Value::QueryResult(_))) {
-        //     if !query_result.is_empty() {
-        //         let headers = &query_result[0];
-        //         if headers.len() > 1 {
-        //             (headers[..headers.len() - 1].join(" "), headers.last().unwrap().to_string())
-        //         } else {
-        //             ("X".to_string(), "Y".to_string()) // todo let user define x, y
-        //         }
-        //     } else {
-        //         ("X".to_string(), "Y".to_string()) // Default if malformed QueryResult
-        //     }
-        // } else {
-        //     ("X".to_string(), "Y".to_string()) // Default if no QueryResult is present
-        // };
-
-        // // Mock visual
-        // println!("Plotting graph with:");
-        // println!("X-Axis Label: {}", axis_labels.0);
-        // println!("Y-Axis Label: {}", axis_labels.1);
-        //
-        // for point in &plot_data {
-        //     println!("Label: {}, Value: {}", point.label, point.value);
-        // }
-
-        return plot_data;
     }
 }
