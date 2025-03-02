@@ -1,5 +1,5 @@
 use eframe::App;
-use egui::{pos2, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, IconData, Image, Rect, RichText, ScrollArea, Sense, TextEdit, TextureHandle, Vec2, ViewportCommand};
+use egui::{Ui, pos2, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, IconData, Image, Rect, RichText, ScrollArea, Sense, TextEdit, TextureHandle, Vec2, ViewportCommand};
 use crate::charter_utilities::{csv2grid, draw_rotated_text, grid2csv, CsvGrid};
 use crate::csvqb::{process_csvqb_pipeline, Value};
 pub use std::thread;
@@ -7,6 +7,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use image::ImageReader;
 use image::GenericImageView;
+
 
 pub struct CharterCsv {
     texture: Option<TextureHandle>,
@@ -50,9 +51,9 @@ impl Default for CharterCsv {
             csvqb_pipeline: vec![],
             graph_data: vec![],
             file_receiver: rx,
-            file_sender: tx, // Initialize icon_data to None here as well, if not using Default
+            file_sender: tx,
         };
-        match ImageReader::open("src/sailboat.png") { // Assuming your icon is in "assets" folder
+        match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
                 match image_reader.decode() {
                     Ok(image) => {
@@ -64,7 +65,7 @@ impl Default for CharterCsv {
                             width: size[0],
                             height: size[1],
                         };
-                        Some(icon_data); // Store the IconData in your app struct
+                        Some(icon_data);
                     }
                     Err(e) => {
                         eprintln!("Failed to decode app icon: {}", e);
@@ -173,7 +174,7 @@ impl CharterCsv {
             });
 
             let total_size = ui.available_size();
-            let content_height = ui.allocate_ui(Vec2::new(total_size.x, total_size.y), |ui| {
+            let _ = ui.allocate_ui(Vec2::new(total_size.x, total_size.y), |ui| {
                 ui.vertical_centered(|ui| {});
                 ui.min_rect().height()
             }).inner;
@@ -372,29 +373,47 @@ impl CharterCsv {
         let frame = egui::Frame::default()
             .fill(egui::Color32::from_rgb(67, 143, 173));
         CentralPanel::default().frame(frame).show(ctx, |ui| {
-            if ui.button("Back").clicked() {
-                self.screen = Screen::Main;
-            }
-            ui.label("Step 1. Select CSV files:".to_string());
-            ScrollArea::vertical().show(ui, |ui| {
-                for (index, file) in self.csv_files.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        let file_name = &file.0;
-                        let mut selected = self.selected_csv_files.iter().any(|(f)| f == &index);
+            ui.horizontal_top(|ui| {
+                if ui.button("Back").clicked() {
+                    self.screen = Screen::Main;
+                }
+                ui.menu_button("Files", |ui| {
+                    ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                        for (index, file) in self.csv_files.iter().enumerate() {
+                            let file_name = &file.0;
+                            let mut selected = self.selected_csv_files.iter().any(|(f)| f == &index);
 
-                        if ui.checkbox(&mut selected, file_name).clicked() {
-                            if selected {
-                                self.selected_csv_files.push(index);
-                            } else {
-                                self.selected_csv_files.retain(|(f)| f != &index);
+                            if ui.checkbox(&mut selected, file_name).clicked() {
+                                if selected {
+                                    self.selected_csv_files.push(index);
+                                } else {
+                                    self.selected_csv_files.retain(|(f)| f != &index);
+                                }
                             }
                         }
                     });
+                });
+                if ui.button("reset query").clicked() {
+                    self.csvqb_pipeline.clear();
+                }
+                if ui.button("Execute Expression").clicked() {
+                    for fields in self.csvqb_pipeline.iter() {
+                        let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
+                        println!("Result: {:?}", &result);;
+                        if !result.is_empty() {
+                            println!("Result: {:?}", &result);
+                            self.graph_data = result;
+                        }
+                    }
+                }
+                if ui.button("view chart").clicked() {
+                    self.screen = Screen::ViewChart;
                 }
             });
+
             ui.add_space(20.0);
 
-            ui.label("Step 2. Select fields & build query:".to_string());
+
             let mut csv_columns: Vec<Vec<String>> = Vec::new();
             for (index) in self.selected_csv_files.iter() {
                 if let Some(csv_file) = self.csv_files.get(*index) {
@@ -405,127 +424,142 @@ impl CharterCsv {
                     csv_columns.push(column_titles);
                 }
             }
-
+            ui.add_space(35.0);
             ui.horizontal(|ui| {
-                for (index, fields) in csv_columns.iter().enumerate() {
-                    ui.push_id(index, |ui| {
-                        ui.group(|ui| {
-                            ui.set_min_size(Vec2::new(300.0, 100.0));
-                            ScrollArea::both()
-                                .max_height(100.0)
-                                .max_width(300.0)
-                                .show(ui, |ui| {
-                                    ui.horizontal_wrapped(|ui| {
-                                        for field in fields.iter() {
-                                            if ui.button(field).clicked() {
-                                                if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                    self.csvqb_pipeline[index].push(field.to_string());
-                                                } else {
-                                                    self.csvqb_pipeline.push(vec![field.to_string()]);
+                ui.style_mut().spacing.indent = 30.0;
+                ui.vertical(|ui| {
+                    ui.indent("left_margin", |ui| {
+                        for (index, fields) in csv_columns.iter().enumerate() {
+                            ui.heading(RichText::new(format!("{}, query #{}", self.csv_files[index].0.split("\\").last().unwrap_or("No file name"), index + 1)).color(Color32::BLACK));
+                            ui.push_id(index, |ui| {
+                                let mut pipeline_str = self.csvqb_pipeline.get(index)
+                                    .map(|pipeline| pipeline.join(" "))
+                                    .unwrap_or_default();
+
+                                if ui.text_edit_singleline(&mut pipeline_str).changed() {
+                                    self.csvqb_pipeline.insert(index, pipeline_str.split_whitespace().map(String::from).collect());
+                                }
+                            });
+                            ui.push_id(index, |ui| {
+                                ui.group(|ui| {
+                                    ui.set_min_size(Vec2::new(300.0, 100.0));
+                                    ScrollArea::both()
+                                        .max_height(100.0)
+                                        .max_width(300.0)
+                                        .show(ui, |ui| {
+                                            ui.horizontal_wrapped(|ui| {
+                                                for field in fields.iter() {
+                                                    if ui.button(field).clicked() {
+                                                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                            self.csvqb_pipeline[index].push(field.to_string());
+                                                        } else {
+                                                            self.csvqb_pipeline.push(vec![field.to_string()]);
+                                                        }
+
+                                                    }
                                                 }
-                                                println!("Compare {:?}", self.csvqb_pipeline);
-                                            }
-                                        }
-                                    });
+                                            });
+                                        });
                                 });
-                        });
+                            });
+                            ui.push_id(index, |ui| {
+                                ui.group(|ui| {
+                                    ui.set_min_size(Vec2::new(300.0, 33.0));
+                                    ScrollArea::both()
+                                        .max_height(100.0)
+                                        .max_width(300.0)
+                                        .show(ui, |ui| {
+                                            ui.horizontal_wrapped(|ui| {
+                                                if ui.button("(").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push("(".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec!["(".to_string()]);
+                                                    }
+                                                }
+                                                if ui.button(")").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push(")".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec![")".to_string()]);
+                                                    }
+                                                }
+                                                if ui.button("GRP").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push("GRP".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec!["GRP".to_string()]);
+                                                    }
+                                                }
+                                                if ui.button("CSUM").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push("CSUM".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec!["CSUM".to_string()]);
+                                                    }
+                                                }
+                                                if ui.button("CAVG").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push("CAVG".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec!["CAVG".to_string()]);
+                                                    }
+                                                }
+                                                if ui.button("CCOUNT").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push("CCOUNT".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec!["CCOUNT".to_string()]);
+                                                    }
+                                                }
+                                                if ui.button("MUL").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push("MUL".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec!["MUL".to_string()]);
+                                                    }
+                                                }
+                                                if ui.button("=").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push("=".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec!["=".to_string()]);
+                                                    }
+                                                }
+                                                if ui.button(">").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push(">".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec![">".to_string()]);
+                                                    }
+                                                }
+                                                if ui.button("<").clicked() {
+                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
+                                                        self.csvqb_pipeline[index].push("<".to_string());
+                                                    } else {
+                                                        self.csvqb_pipeline.push(vec!["<".to_string()]);
+                                                    }
+                                                }
+                                            });
+                                        });
+                                });
+                            });
+                            ui.add_space(35.0);
+                        }
                     });
-                    if ui.button("(").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push("(".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec!["(".to_string()]);
+                });
+                ui.vertical_centered_justified(|ui| {
+                    ui.heading(RichText::new("Pipeline output").color(Color32::BLACK));
+                    let formatted_data = &self.graph_data;  
+                    ScrollArea::vertical().show(ui, |ui: &mut Ui| {
+                        for row in formatted_data {
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(format!("{:?}", row)).color(Color32::BLACK));
+                            });
                         }
-                    }
-                    if ui.button(")").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push(")".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec![")".to_string()]);
-                        }
-                    }
-                    if ui.button("GRP").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push("GRP".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec!["GRP".to_string()]);
-                        }
-                    }
-                    if ui.button("CSUM").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push("CSUM".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec!["CSUM".to_string()]);
-                        }
-                    }
-                    if ui.button("CAVG").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push("CAVG".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec!["CAVG".to_string()]);
-                        }
-                    }
-                    if ui.button("CCOUNT").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push("CCOUNT".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec!["CCOUNT".to_string()]);
-                        }
-                    }
-                    if ui.button("MUL").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push("MUL".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec!["MUL".to_string()]);
-                        }
-                    }
-                    if ui.button("=").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push("=".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec!["=".to_string()]);
-                        }
-                    }
-                    if ui.button(">").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push(">".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec![">".to_string()]);
-                        }
-                    }
-                    if ui.button("<").clicked() {
-                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                            self.csvqb_pipeline[index].push("<".to_string());
-                        } else {
-                            self.csvqb_pipeline.push(vec!["<".to_string()]);
-                        }
-                    }
-                }
+                    });
+                })
             });
-
-            ui.add_space(20.0);
-            if ui.button("reset query").clicked() {
-                self.csvqb_pipeline.clear();
-            }
-
-            if ui.button("Execute Expression").clicked() {
-                for fields in self.csvqb_pipeline.iter() {
-                    let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
-                    println!("Result: {:?}", &result);;
-                    if !result.is_empty() {
-                        println!("Result: {:?}", &result);
-                        self.graph_data = result;
-                    }
-                }
-            }
-
-            ui.label("Step 3. Fit data to chart:".to_string());
-
-            if ui.button("view chart").clicked() {
-                self.screen = Screen::ViewChart;
-            }
-
-
         });
     }
 

@@ -20,7 +20,7 @@ fn main() {
         ..Default::default()
     };
     eframe::run_native(
-        "CharterCSV",
+        "Charter CSV",
         options,
         Box::new(|cc| {
             // let mut visuals = cc.egui_ctx.style().visuals.clone();
