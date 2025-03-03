@@ -1,12 +1,12 @@
 use eframe::App;
-use egui::{Ui, pos2, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, IconData, Image, Rect, RichText, ScrollArea, Sense, TextEdit, TextureHandle, Vec2, ViewportCommand};
-use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, draw_bar_graph};
+use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand};
+use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query};
+use crate::charter_graphs::{draw_bar_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
 pub use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use image::ImageReader;
-use image::GenericImageView;
 
 
 pub struct CharterCsv {
@@ -18,6 +18,7 @@ pub struct CharterCsv {
     pub graph_data: Vec<Value>,
     pub file_receiver: Receiver<(String, Vec<Vec<String>>)>,
     pub file_sender: Sender<(String, Vec<Vec<String>>)>,
+    chart_style_test: String,
 }
 
 pub enum Screen {
@@ -33,12 +34,14 @@ pub enum Screen {
 pub struct PlotPoint {
     pub(crate) label: String,
     pub(crate) value: f64,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
 }
 
 impl Default for CharterCsv {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
-        let mut app = Self {
+        let app = Self {
             texture: None,
             screen: Screen::Main,
             csv_files: vec![(
@@ -52,6 +55,7 @@ impl Default for CharterCsv {
             graph_data: vec![],
             file_receiver: rx,
             file_sender: tx,
+            chart_style_test: "hist1".to_string()
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -129,7 +133,7 @@ impl App for CharterCsv {
 impl CharterCsv {
     fn show_main_screen(&mut self, ctx: &Context) {
         let frame = egui::Frame::default()
-            .fill(egui::Color32::from_rgb(67, 143, 173));
+            .fill(Color32::from_rgb(67, 143, 173));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             let texture: &mut TextureHandle = self.texture.get_or_insert_with(|| {
@@ -153,7 +157,7 @@ impl CharterCsv {
                             }
                             Err(e) => {
                                 eprintln!("Failed to decode image: {:?}", e);
-                                let color_image = egui::ColorImage::new([16, 16], egui::Color32::RED);
+                                let color_image = egui::ColorImage::new([16, 16], Color32::RED);
                                 ctx.load_texture(
                                     "error_placeholder",
                                     color_image,
@@ -163,7 +167,7 @@ impl CharterCsv {
                         }
                     }
                     _ => {
-                        let color_image = egui::ColorImage::new([16, 16], egui::Color32::RED);
+                        let color_image = egui::ColorImage::new([16, 16], Color32::RED);
                         ctx.load_texture(
                             "error_placeholder",
                             color_image,
@@ -175,7 +179,7 @@ impl CharterCsv {
 
             let total_size = ui.available_size();
             let _ = ui.allocate_ui(Vec2::new(total_size.x, total_size.y), |ui| {
-                ui.vertical_centered(|ui| {});
+                ui.vertical_centered(|_ui| {});
                 ui.min_rect().height()
             }).inner;
 
@@ -188,8 +192,8 @@ impl CharterCsv {
                         .max_width(200.0)
                 );
                 ui.add_space(20.0);
-                ui.heading(RichText::new("Charter CSV").color(egui::Color32::BLACK));
-                ui.label(RichText::new("navigate your data with speed and precision").color(egui::Color32::BLACK));
+                ui.heading(RichText::new("Charter CSV").color(Color32::BLACK));
+                ui.label(RichText::new("navigate your data with speed and precision").color(Color32::BLACK));
                 ui.add_space(20.0);
 
                 let menu_btn_size = Vec2::new(300.0, 30.0);
@@ -213,7 +217,7 @@ impl CharterCsv {
                 if ui.add_sized(menu_btn_size, Button::new("Create New CSV File")).clicked() {
                     self.screen = Screen::CreateCsv {
                         content: (
-                            "/todo/setpath".to_string(),
+                            "/todo/set path".to_string(),
                             vec![vec!["".to_string()]],
                         ),
                     };
@@ -236,7 +240,7 @@ impl CharterCsv {
 
     fn show_csv_list(&mut self, ctx: &Context) {
         let frame = egui::Frame::default()
-            .fill(egui::Color32::from_rgb(67, 143, 173));
+            .fill(Color32::from_rgb(67, 143, 173));
         let mut files_to_remove: Option<usize> = None;
         let mut next_screen: Option<Screen> = None;
 
@@ -279,7 +283,7 @@ impl CharterCsv {
         edit_index: Option<usize>
     ) -> Option<Screen> {
         let frame = egui::Frame::default()
-            .fill(egui::Color32::from_rgb(67, 143, 173));
+            .fill(Color32::from_rgb(67, 143, 173));
         let mut next_screen = None;
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -371,52 +375,60 @@ impl CharterCsv {
 
     fn create_chart_screen(&mut self, ctx: &Context) {
         let frame = egui::Frame::default()
-            .fill(egui::Color32::from_rgb(67, 143, 173));
-        CentralPanel::default().frame(frame).show(ctx, |ui| {
-            ui.horizontal_top(|ui| {
-                if ui.button("Back").clicked() {
-                    self.screen = Screen::Main;
-                }
-                ui.menu_button("Files", |ui| {
-                    ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                        for (index, file) in self.csv_files.iter().enumerate() {
-                            let file_name = &file.0;
-                            let mut selected = self.selected_csv_files.iter().any(|(f)| f == &index);
+            .fill(Color32::from_rgb(67, 143, 173));
 
-                            if ui.checkbox(&mut selected, file_name).clicked() {
-                                if selected {
-                                    self.selected_csv_files.push(index);
-                                } else {
-                                    self.selected_csv_files.retain(|(f)| f != &index);
+        CentralPanel::default().frame(frame).show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(Color32::from_rgb(50, 112, 128))
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        if ui.add_sized((100.0, 35.0), Button::new("Back")).clicked() {
+                            self.screen = Screen::Main;
+                        }
+
+                        ui.add_space(112.0);
+                        ui.menu_button("Files", |ui| {
+                            ScrollArea::vertical().max_width(369.0).max_height(f32::INFINITY).show(ui, |ui| {
+                                for (index, file) in self.csv_files.iter().enumerate() {
+                                    let file_name = &file.0;
+                                    let mut selected = self.selected_csv_files.iter().any(|f| f == &index);
+
+                                    if ui.checkbox(&mut selected, file_name).clicked() {
+                                        if selected {
+                                            self.selected_csv_files.push(index);
+                                        } else {
+                                            self.selected_csv_files.retain(|f| f != &index);
+                                        }
+                                    }
+                                }
+                            });
+                        });
+
+                        if ui.add_sized((100.0, 35.0), Button::new("reset query")).clicked() {
+                            self.csvqb_pipeline.clear();
+                            self.graph_data.clear();
+                        }
+
+                        if ui.add_sized((100.0, 35.0), Button::new("Execute Expression")).clicked() {
+                            for fields in self.csvqb_pipeline.iter() {
+                                let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
+                                println!("Result: {:?}", &result);
+                                if !result.is_empty() {
+                                    println!("Result: {:?}", &result);
+                                    self.graph_data = result;
                                 }
                             }
                         }
+
+                        if ui.add_sized((100.0, 35.0), Button::new("view chart")).clicked() {
+                            self.screen = Screen::ViewChart;
+                        }
+                        ui.add_space(ui.available_width());
                     });
                 });
-                if ui.button("reset query").clicked() {
-                    self.csvqb_pipeline.clear();
-                    self.graph_data.clear();
-                }
-                if ui.button("Execute Expression").clicked() {
-                    for fields in self.csvqb_pipeline.iter() {
-                        let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
-                        println!("Result: {:?}", &result);;
-                        if !result.is_empty() {
-                            println!("Result: {:?}", &result);
-                            self.graph_data = result;
-                        }
-                    }
-                }
-                if ui.button("view chart").clicked() {
-                    self.screen = Screen::ViewChart;
-                }
-            });
-
-            ui.add_space(20.0);
-
 
             let mut csv_columns: Vec<Vec<String>> = Vec::new();
-            for (index) in self.selected_csv_files.iter() {
+            for index in self.selected_csv_files.iter() {
                 if let Some(csv_file) = self.csv_files.get(*index) {
                     let column_titles = csv_file.1
                         .get(0)
@@ -437,16 +449,16 @@ impl CharterCsv {
                                     .map(|pipeline| pipeline.join(" "))
                                     .unwrap_or_default();
 
-                                if ui.text_edit_singleline(&mut pipeline_str).changed() {
+                                if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
                                     self.csvqb_pipeline.insert(index, pipeline_str.split_whitespace().map(String::from).collect());
                                 }
                             });
                             ui.push_id(index, |ui| {
                                 ui.group(|ui| {
-                                    ui.set_min_size(Vec2::new(300.0, 100.0));
+                                    ui.set_min_size(Vec2::new(ui.available_width()/3.0, 100.0));
                                     ScrollArea::both()
                                         .max_height(100.0)
-                                        .max_width(300.0)
+                                        .max_width(ui.available_width()/3.0)
                                         .show(ui, |ui| {
                                             ui.horizontal_wrapped(|ui| {
                                                 for field in fields.iter() {
@@ -551,9 +563,9 @@ impl CharterCsv {
                 });
                 ui.vertical_centered_justified(|ui| {
                     ui.heading(RichText::new("Pipeline output").color(Color32::BLACK));
-                    let formatted_data = &self.graph_data;
+                    let expression_data = &self.graph_data;
                     ScrollArea::vertical().show(ui, |ui: &mut Ui| {
-                        for row in formatted_data {
+                        for row in expression_data {
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(format!("{:?}", row)).color(Color32::BLACK));
                             });
@@ -566,16 +578,44 @@ impl CharterCsv {
 
     fn show_chart_screen(&mut self, ctx: &Context) {
         let frame = egui::Frame::default()
-            .fill(egui::Color32::from_rgb(67, 143, 173));
+            .fill(Color32::from_rgb(67, 143, 173));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             if ui.button("Back").clicked() {
                 self.screen = Screen::CreateChart;
             }
 
-            let mut formatted_data = Some(format_graph_query(self.graph_data.clone()));
-            let _ = draw_bar_graph(ui, formatted_data);
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_label("Select Chart")
+                    .selected_text(&self.chart_style_test)
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_value(&mut self.chart_style_test, "bar1".to_string(), "Bar Graph").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "pie1".to_string(), "Pie Chart").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "hist1".to_string(), "Histogram").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "scatr".to_string(), "Scatter Plot").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "line1".to_string(), "Line Chart").clicked() {}
+                    });
+            });
 
+            let formatted_data = Some(format_graph_query(self.graph_data.clone()));
+            match self.chart_style_test.as_str() {
+                "bar1" => {
+                    let _ = draw_bar_graph(ui, formatted_data);
+                }
+                "pie1" => {
+                    let _ = draw_pie_chart(ui, formatted_data);
+                }
+                "hist1" => {
+                    let _ = draw_histogram(ui, formatted_data);
+                }
+                "scatr" => {
+                    let _ = draw_scatter_plot(ui, formatted_data);
+                }
+                "line1" => {
+                    let _ = draw_line_chart(ui, formatted_data);
+                }
+                _ => {}
+            }
 
             if ui.button("Export Chart").clicked() {
                 // todo Billy

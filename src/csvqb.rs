@@ -1,4 +1,3 @@
-use egui::TextBuffer;
 use crate::charter_utilities::CsvGrid;
 
 #[derive(Debug, Clone)]
@@ -7,7 +6,7 @@ pub enum Value {
     Number(f64),
     Text(String),
     Field(String),
-    QueryResult(Vec<Vec<(String)>>)
+    QueryResult(Vec<Vec<String>>)
 }
 
 #[derive(Debug)]

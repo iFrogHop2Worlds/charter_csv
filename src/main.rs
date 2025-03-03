@@ -1,9 +1,9 @@
 #![feature(str_as_str)]
-
 pub use eframe::{egui, App};
 use egui::{Context, ViewportBuilder};
 pub mod csvqb;
 pub mod charter_utilities;
+pub mod charter_graphs;
 mod charter_csv;
 use charter_csv::CharterCsv;
 
@@ -22,7 +22,7 @@ fn main() {
     eframe::run_native(
         "Charter CSV",
         options,
-        Box::new(|cc| {
+        Box::new(|_cc| {
             // let mut visuals = cc.egui_ctx.style().visuals.clone();
             // visuals.window_fill = egui::Color32::from_rgb(32, 32, 32);
             // visuals.panel_fill = egui::Color32::from_rgb(32, 32, 32);
