@@ -81,6 +81,7 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
                             value: *num,
                             x: i as f64,
                             y: *num,
+                            depth: 0.0,
                         });
                         i += 2;
                     } else {
@@ -107,6 +108,7 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
                             value: last_value,
                             x: idx as f64,
                             y: last_value,
+                            depth: 0.0,
                         });
                     } else {
                         println!("{}", "Failed to parse last column value as a number in QueryResult".to_string());

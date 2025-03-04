@@ -390,3 +390,66 @@ pub fn draw_line_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>
         }
     }).inner
 }
+
+pub fn draw_flame_graph(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>) -> Option<egui::Response> {
+    ScrollArea::horizontal().show(ui, |ui| {
+        if let Some(graph_data) = &formatted_data {
+            //println!("========================{:?}", graph_data);
+            let padding = 10.0;
+            let available_width = ui.available_width() - (padding * 2.0);
+            let available_height = 600.0;
+            let block_height = 30.0;
+
+            let (response, painter) = ui.allocate_painter(
+                vec2(available_width + padding * 2.0, available_height + padding * 2.0),
+                Sense::hover(),
+            );
+
+            let rect = response.rect;
+
+            // Calculate max depth and total value for scaling
+            let max_depth = graph_data.iter().map(|point| point.depth).fold(0.0, f32::max);
+            let total_value = graph_data.iter().map(|point| point.value as f32).sum::<f32>();
+
+            // Draw blocks
+            for point in graph_data {
+                let block_width = (point.value as f32 / total_value) * available_width;
+                let y_position = rect.min.y + padding + (max_depth - point.depth) * block_height;
+                let x_position = rect.min.x + padding + (point.x as f32 / total_value) * available_width;
+
+                // Create block rectangle
+                let block_rect = Rect::from_min_size(
+                    pos2(x_position, y_position),
+                    vec2(block_width, block_height - 2.0), // -2 for spacing
+                );
+
+                // Generate color based on depth
+                let hue = (point.depth * 0.1) % 1.0;
+                let color = Color32::from_rgb(
+                    (255.0 * hue.sin().abs()) as u8,
+                    (255.0 * (hue + 0.33).sin().abs()) as u8,
+                    (255.0 * (hue + 0.67).sin().abs()) as u8,
+                );
+
+                // Draw block
+                painter.rect_filled(block_rect, 2.0, color);
+
+                // Draw label if block is wide enough
+                if block_width > 40.0 {
+                    painter.text(
+                        pos2(x_position + 5.0, y_position + block_height / 2.0),
+                        Align2::LEFT_CENTER,
+                        &point.label,
+                        FontId::default(),
+                        Color32::BLACK,
+                    );
+                }
+            }
+
+            Some(response)
+        } else {
+            None
+        }
+    }).inner
+}
+

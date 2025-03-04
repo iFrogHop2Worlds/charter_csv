@@ -1,7 +1,7 @@
 use eframe::App;
 use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand};
 use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query};
-use crate::charter_graphs::{draw_bar_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
+use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
 pub use std::thread;
 use std::sync::mpsc;
@@ -36,6 +36,7 @@ pub struct PlotPoint {
     pub(crate) value: f64,
     pub(crate) x: f64,
     pub(crate) y: f64,
+    pub depth: f32
 }
 
 impl Default for CharterCsv {
@@ -55,7 +56,7 @@ impl Default for CharterCsv {
             graph_data: vec![],
             file_receiver: rx,
             file_sender: tx,
-            chart_style_test: "hist1".to_string()
+            chart_style_test: "Histogram".to_string()
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -186,55 +187,72 @@ impl CharterCsv {
             let top_margin: f32 = 25.0;
             ui.add_space(top_margin.max(0.0));
 
-            ui.vertical_centered(|ui| {
-                ui.add(
-                    Image::new(&*texture)
-                        .max_width(200.0)
-                );
-                ui.add_space(20.0);
-                ui.heading(RichText::new("Charter CSV").color(Color32::BLACK));
-                ui.label(RichText::new("navigate your data with speed and precision").color(Color32::BLACK));
-                ui.add_space(20.0);
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    egui::Frame::NONE// Use a Frame to customize the indent area
+                        .fill(Color32::TRANSPARENT) // Make the frame background transparent
+                        .stroke(egui::Stroke::NONE)       // Remove the frame border (important to hide the default indent line)
+                        .inner_margin(egui::Margin {
+                                left: 60.0 as i8,
+                                right: 10.0 as i8,
+                                top: 20.0 as i8,
+                                bottom: 5.0 as i8,
+                            })
+                        .show(ui, |ui| {
+                            ui.add(
+                                Image::new(&*texture)
+                                    .max_width(200.0)
+                            );
+                            ui.add_space(75.0);
+                            ui.heading(RichText::new("Charter CSV").color(Color32::BLACK));
+                            ui.label(RichText::new("navigate your data with speed and precision").color(Color32::BLACK));
+                            ui.add_space(20.0);
 
-                let menu_btn_size = Vec2::new(300.0, 30.0);
-                if ui.add_sized(menu_btn_size, Button::new("load CSV Files")).clicked() {
-                    if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
-                        let path_as_string = path.to_str().unwrap().to_string();
-                        let sender = self.file_sender.clone();
-                        thread::spawn(move || {
-                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                let grid: CsvGrid = csv2grid(&content);
-                                let _ = sender.send((path_as_string, grid));
+                            let menu_btn_size = Vec2::new(300.0, 30.0);
+                            if ui.add_sized(menu_btn_size, Button::new("load CSV Files")).clicked() {
+                                if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
+                                    let path_as_string = path.to_str().unwrap().to_string();
+                                    let sender = self.file_sender.clone();
+                                    thread::spawn(move || {
+                                        if let Ok(content) = std::fs::read_to_string(&path) {
+                                            let grid: CsvGrid = csv2grid(&content);
+                                            let _ = sender.send((path_as_string, grid));
+                                        }
+                                    });
+                                }
+                            }
+
+                            if ui.add_sized(menu_btn_size, Button::new("View All CSV Files")).clicked() {
+                                self.screen = Screen::ViewCsv;
+                            }
+
+                            if ui.add_sized(menu_btn_size, Button::new("Create New CSV File")).clicked() {
+                                self.screen = Screen::CreateCsv {
+                                    content: (
+                                        "/todo/set path".to_string(),
+                                        vec![vec!["".to_string()]],
+                                    ),
+                                };
+                            }
+
+                            if ui.add_sized(menu_btn_size, Button::new("Create Chart")).clicked() {
+                                self.screen = Screen::CreateChart;
+                            }
+
+                            if ui.add_sized(menu_btn_size, Button::new("View All Charts")).clicked() {
+                                self.screen = Screen::ViewChart;
+                            }
+
+                            if ui.add_sized(menu_btn_size, Button::new("Close Program")).clicked() {
+                                ctx.send_viewport_cmd(ViewportCommand::Close);
                             }
                         });
-                    }
-                }
-
-                if ui.add_sized(menu_btn_size, Button::new("View All CSV Files")).clicked() {
-                    self.screen = Screen::ViewCsv;
-                }
-
-                if ui.add_sized(menu_btn_size, Button::new("Create New CSV File")).clicked() {
-                    self.screen = Screen::CreateCsv {
-                        content: (
-                            "/todo/set path".to_string(),
-                            vec![vec!["".to_string()]],
-                        ),
-                    };
-                }
-
-                if ui.add_sized(menu_btn_size, Button::new("Create Chart")).clicked() {
-                    self.screen = Screen::CreateChart;
-                }
-
-                if ui.add_sized(menu_btn_size, Button::new("View All Charts")).clicked() {
-                    self.screen = Screen::ViewChart;
-                }
-
-                if ui.add_sized(menu_btn_size, Button::new("Close Program")).clicked() {
-                    ctx.send_viewport_cmd(ViewportCommand::Close);
-                }
-            });
+                });
+                ui.vertical_centered_justified(|ui| {
+                    ui.add_space(ui.available_width() / 2.5);
+                    ui.label(RichText::new("sessions").color(Color32::BLACK));
+                })
+            })
         });
     }
 
@@ -245,27 +263,32 @@ impl CharterCsv {
         let mut next_screen: Option<Screen> = None;
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
-            ScrollArea::vertical().show(ui, |ui| {
-                for (index, file) in self.csv_files.iter().enumerate() {
-                    let file_name = file.0.split("\\").last().unwrap_or("No file name");
-                    ui.horizontal(|ui| {
-                        ui.label(file_name);
-                        if ui.button("edit").clicked() {
-                            next_screen = Some(Screen::EditCsv {
-                                index,
-                                content: file.clone(),
-                            });
-                        }
-                        if ui.button("delete").clicked() {
-                            files_to_remove = Some(index);
-                        }
-                    });
-                }
-            });
-
             if ui.button("Back").clicked() {
                 next_screen = Some(Screen::Main);
             }
+
+            ui.add_space(21.0);
+            for (index, file) in self.csv_files.iter().enumerate() {
+                let file_name = file.0.split("\\").last().unwrap_or("No file name");
+                ui.push_id(index, |ui| {
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.set_min_size(Vec2::new(ui.available_width(), 0.0));
+                            ui.label(file_name);
+                            if ui.button("edit").clicked() {
+                                next_screen = Some(Screen::EditCsv {
+                                    index,
+                                    content: file.clone(),
+                                });
+                            }
+                            if ui.button("delete").clicked() {
+                                files_to_remove = Some(index);
+                            }
+                        })
+                    });
+                });
+            }
+
         });
 
         if let Some(index) = files_to_remove {
@@ -589,30 +612,34 @@ impl CharterCsv {
                 egui::ComboBox::from_label("Select Chart")
                     .selected_text(&self.chart_style_test)
                     .show_ui(ui, |ui| {
-                        if ui.selectable_value(&mut self.chart_style_test, "bar1".to_string(), "Bar Graph").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_test, "pie1".to_string(), "Pie Chart").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_test, "hist1".to_string(), "Histogram").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_test, "scatr".to_string(), "Scatter Plot").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_test, "line1".to_string(), "Line Chart").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "Bar Graph".to_string(), "Bar Graph").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "Histogram".to_string(), "Histogram").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "Pie Chart".to_string(), "Pie Chart").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "Scatter Plot".to_string(), "Scatter Plot").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "Line Chart".to_string(), "Line Chart").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_test, "Flame Graph".to_string(), "Flame Graph").clicked() {}
                     });
             });
 
             let formatted_data = Some(format_graph_query(self.graph_data.clone()));
             match self.chart_style_test.as_str() {
-                "bar1" => {
+                "Bar Graph" => {
                     let _ = draw_bar_graph(ui, formatted_data);
                 }
-                "pie1" => {
+                "Pie Chart" => {
                     let _ = draw_pie_chart(ui, formatted_data);
                 }
-                "hist1" => {
+                "Histogram" => {
                     let _ = draw_histogram(ui, formatted_data);
                 }
-                "scatr" => {
+                "Scatter Plot" => {
                     let _ = draw_scatter_plot(ui, formatted_data);
                 }
-                "line1" => {
+                "Line Chart" => {
                     let _ = draw_line_chart(ui, formatted_data);
+                }
+                "Flame Graph" => {
+                    let _ = draw_flame_graph(ui, formatted_data);
                 }
                 _ => {}
             }
@@ -623,3 +650,5 @@ impl CharterCsv {
         });
     }
 }
+
+
