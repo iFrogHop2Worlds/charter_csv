@@ -1,17 +1,23 @@
 use std::fs::{self, File};
 use std::io::{self, Write, BufRead, BufReader};
 use std::path::Path;
-#[derive(Debug)]
+use std::sync::mpsc;
+use std::thread;
+use crate::charter_utilities::{csv2grid, CsvGrid};
+
+#[derive(Debug, Clone)]
 pub struct Session {
     pub(crate) name: String,
-    pub(crate) data: Vec<(String, Vec<Vec<String>>)>,
+    pub(crate) files: Vec<String>,
+    pub(crate) pipelines: Vec<String>,
 }
 
 impl Session {
-    pub fn new(name: String, data: Vec<(String, Vec<Vec<String>>)>) -> Self {
+    pub fn new(name: String, files: Vec<String>, pipelines: Vec<String>) -> Self {
         Self {
             name,
-            data
+            files,
+            pipelines,
         }
     }
 
@@ -21,39 +27,41 @@ impl Session {
 
     pub fn csv_files(&self) -> Vec<String> {
         let mut csv_files = Vec::new();
-        for session in self.data.clone() {
-            csv_files.push(session.0);
+        for file in self.files.clone() {
+            csv_files.push(file);
         }
         csv_files
     }
 
-    pub fn csvqb_pipelines(&self) -> Vec<Vec<Vec<String>>> {
+    pub fn csvqb_pipelines(&self) -> Vec<String> {
         let mut csvqb_pipelines = Vec::new();
-        for session in self.data.clone() {
-            println!("{:?}", session.1);
-            csvqb_pipelines.push(session.1);
+        for pipeline in self.files.clone() {
+            println!("{:?}", pipeline);
+            csvqb_pipelines.push(pipeline);
         }
         csvqb_pipelines
     }
 }
-pub fn save_session(csv_files: Vec<String>, pipelines: Vec<String>) -> io::Result<()> {
+pub fn save_session(session_name: String, csv_files: Vec<String>, pipelines: Vec<String>) -> io::Result<()> {
     let sessions_dir = Path::new("C:/source/Charter_CSV/src/sessions");
     if !sessions_dir.exists() {
         fs::create_dir_all(sessions_dir)?;
     }
 
-    for file_path in &csv_files {
-        let file_name = Path::new(file_path).file_name().unwrap();
-        let full_path = sessions_dir.join(file_name);
-        let mut file = File::create(&full_path)?;
-        for row in pipelines.clone() {
-            writeln!(file, "{}", row)?;
-        }
+    let file_name = Path::new(&session_name).file_name().unwrap();
+    let full_path = sessions_dir.join(file_name);
+    let mut file = File::create(&full_path)?;
+    for file_path in csv_files.clone() {
+        writeln!(file, "{}", file_path)?;
+    }
+    writeln!(file)?;
+    for row in pipelines.clone() {
+        writeln!(file, "{}", row)?;
     }
 
     Ok(())
 }
-pub fn restore_sessions() -> io::Result<Vec<Session>> {
+pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
     let mut sessions = Vec::new();
     let sessions_dir = Path::new("C:/source/Charter_CSV/src/sessions");
 
@@ -72,22 +80,49 @@ pub fn restore_sessions() -> io::Result<Vec<Session>> {
                 let file = File::open(&file_path)?;
                 let reader = BufReader::new(file);
                 let mut csvqb_pipeline = Vec::new();
+                let mut csv_files = Vec::new();
 
+                let mut is_csv_files = true;
                 for line in reader.lines() {
                     let line = line?;
-                    let row: Vec<String> = line.split(' ').map(String::from).collect();
-                    csvqb_pipeline.push(row);
+                    if line.trim().is_empty() {
+                        is_csv_files = false;
+                        continue;
+                    }
+                    if is_csv_files {
+                        csv_files.push(line);
+                    } else {
+                        csvqb_pipeline.push(line);
+                    }
                 }
 
                 sessions.push(Session {
-                    name: file_name,  //Should be a session identifier
-                    data: vec![(file_path.to_string_lossy().to_string(), csvqb_pipeline)],
+                    name: file_name,
+                    files: csv_files,
+                    pipelines: csvqb_pipeline,
                 });
-
-                // todo: Reconstruct a default session, add support to change sessions.
             }
         }
     }
 
     Ok(sessions)
 }
+
+pub fn reconstruct_session(
+    session: Session,
+) -> mpsc::Receiver<(String, CsvGrid)> {
+    let (sender, receiver) = mpsc::channel();
+    let files = session.files.clone();
+
+    thread::spawn(move || {
+        for file_path in files {
+            if let Ok(content) = std::fs::read_to_string(&file_path) {
+                let grid: CsvGrid = csv2grid(&content);
+                let _ = sender.send((file_path, grid));
+            }
+        }
+    });
+
+    receiver
+}
+

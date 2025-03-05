@@ -8,7 +8,7 @@ pub use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use image::{ImageReader};
-use crate::session::{restore_sessions, save_session, Session};
+use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 
 
 pub struct CharterCsvApp {
@@ -22,6 +22,7 @@ pub struct CharterCsvApp {
     pub file_sender: Sender<(String, Vec<Vec<String>>)>,
     chart_style_prototype: String,
     sessions: Vec<Session>,
+    current_session: String,
 }
 
 pub enum Screen {
@@ -61,6 +62,7 @@ impl Default for CharterCsvApp {
             file_sender: tx,
             chart_style_prototype: "Histogram".to_string(),
             sessions: vec![],
+            current_session: "".to_string(),
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -133,7 +135,16 @@ impl App for CharterCsvApp {
                 self.show_chart_screen(ctx)
             }
         }
-        self.sessions = restore_sessions().expect("Failed to restore sessions");
+
+        self.sessions = load_sessions_from_directory().expect("Failed to restore sessions");
+        if self.current_session == "".to_string() && self.sessions.len() > 0 {
+            let receiver = reconstruct_session(self.sessions[1].clone());
+            while let Ok((file_path, grid)) = receiver.recv() {
+                self.csv_files.push((file_path, grid));
+            }
+            self.current_session = self.sessions[1].name.clone(); //todo make dynamic
+        }
+
     }
 }
 impl CharterCsvApp {
@@ -259,7 +270,7 @@ impl CharterCsvApp {
                                     pipelines.push(pipeline_str);
                                 }
 
-                                save_session(file_paths, pipelines).expect("TODO: panic message");
+                                save_session("Industrial Data".to_string(),file_paths, pipelines).expect("TODO: panic message");
                             }
 
                             if ui.add_sized(menu_btn_size, Button::new("Close Program")).clicked() {
@@ -268,12 +279,18 @@ impl CharterCsvApp {
                         });
                 });
                 ui.vertical_centered_justified(|ui| {
-                    ui.add_space(ui.available_width() / 2.5);
+                    ui.add_space(ui.available_height() / 4.0);
                     ui.heading(RichText::new("sessions").color(Color32::BLACK));
                     ui.add_space(10.0);
                     for (index, session) in self.sessions.iter().enumerate() {
-                        ui.label(RichText::new(format!("session name: {}", session.name)).color(Color32::BLACK));
-                        ui.label(RichText::new(format!("session name: {:?}", session.data)).color(Color32::BLACK));
+                        let name_color = if self.current_session == session.name {
+                            Color32::GREEN
+                        } else {
+                            Color32::BLACK
+                        };
+                        ui.label(RichText::new(format!("session name: {}", session.name)).color(name_color));
+                        ui.label(RichText::new(format!("session data: {:?}", session.files)).color(Color32::BLACK));
+                        ui.label(RichText::new(format!("session pipelines: {:?}", session.pipelines)).color(Color32::BLACK));
                         ui.add_space(12.0);
                     }
                 })
