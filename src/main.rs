@@ -5,7 +5,8 @@ pub mod csvqb;
 pub mod charter_utilities;
 pub mod charter_graphs;
 mod charter_csv;
-use charter_csv::CharterCsv;
+pub mod session;
+use charter_csv::CharterCsvApp;
 
 fn main() {
     let ctx = Context::default();
@@ -29,7 +30,7 @@ fn main() {
             // visuals.override_text_color = Some(egui::Color32::BLACK);
             // cc.egui_ctx.set_visuals(visuals);
 
-            Ok(Box::new(CharterCsv::default()))
+            Ok(Box::new(CharterCsvApp::default()))
         }),
     )
         .expect("Unexpected error in running the application");

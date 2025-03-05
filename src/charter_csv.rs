@@ -1,3 +1,4 @@
+use std::error::Error;
 use eframe::App;
 use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand};
 use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query};
@@ -6,19 +7,21 @@ use crate::csvqb::{process_csvqb_pipeline, Value};
 pub use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
-use image::ImageReader;
+use image::{ImageReader};
+use crate::session::{restore_sessions, save_session, Session};
 
 
-pub struct CharterCsv {
+pub struct CharterCsvApp {
     texture: Option<TextureHandle>,
     pub screen: Screen,
-    pub csv_files: Vec<(String, CsvGrid)>,
+    pub csv_files: Vec<(String, CsvGrid)>, // files loaded in our program (path, 2d grid)
     pub selected_csv_files: Vec<usize>,
-    pub csvqb_pipeline: Vec<Vec<String>>,
+    pub csvqb_pipelines: Vec<Vec<String>>,
     pub graph_data: Vec<Value>,
     pub file_receiver: Receiver<(String, Vec<Vec<String>>)>,
     pub file_sender: Sender<(String, Vec<Vec<String>>)>,
-    chart_style_test: String,
+    chart_style_prototype: String,
+    sessions: Vec<Session>,
 }
 
 pub enum Screen {
@@ -36,10 +39,10 @@ pub struct PlotPoint {
     pub(crate) value: f64,
     pub(crate) x: f64,
     pub(crate) y: f64,
-    pub depth: f32
+    pub(crate) depth: f32
 }
 
-impl Default for CharterCsv {
+impl Default for CharterCsvApp {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
         let app = Self {
@@ -52,11 +55,12 @@ impl Default for CharterCsv {
                 ]
             )],
             selected_csv_files: vec![],
-            csvqb_pipeline: vec![],
+            csvqb_pipelines: vec![],
             graph_data: vec![],
             file_receiver: rx,
             file_sender: tx,
-            chart_style_test: "Histogram".to_string()
+            chart_style_prototype: "Histogram".to_string(),
+            sessions: vec![],
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -85,7 +89,7 @@ impl Default for CharterCsv {
     }
 }
 
-impl App for CharterCsv {
+impl App for CharterCsvApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         if let Ok((path, grid)) = self.file_receiver.try_recv() {
             self.csv_files.push((path, grid));
@@ -129,12 +133,13 @@ impl App for CharterCsv {
                 self.show_chart_screen(ctx)
             }
         }
+        self.sessions = restore_sessions().expect("Failed to restore sessions");
     }
 }
-impl CharterCsv {
+impl CharterCsvApp {
     fn show_main_screen(&mut self, ctx: &Context) {
         let frame = egui::Frame::default()
-            .fill(Color32::from_rgb(67, 143, 173));
+            .fill(Color32::from_rgb(211, 211, 211));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             let texture: &mut TextureHandle = self.texture.get_or_insert_with(|| {
@@ -189,9 +194,9 @@ impl CharterCsv {
 
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    egui::Frame::NONE// Use a Frame to customize the indent area
-                        .fill(Color32::TRANSPARENT) // Make the frame background transparent
-                        .stroke(egui::Stroke::NONE)       // Remove the frame border (important to hide the default indent line)
+                    egui::Frame::NONE
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
                         .inner_margin(egui::Margin {
                                 left: 60.0 as i8,
                                 right: 10.0 as i8,
@@ -209,7 +214,7 @@ impl CharterCsv {
                             ui.add_space(20.0);
 
                             let menu_btn_size = Vec2::new(300.0, 30.0);
-                            if ui.add_sized(menu_btn_size, Button::new("load CSV Files")).clicked() {
+                            if ui.add_sized(menu_btn_size, Button::new("Load File")).clicked() {
                                 if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
                                     let path_as_string = path.to_str().unwrap().to_string();
                                     let sender = self.file_sender.clone();
@@ -222,11 +227,11 @@ impl CharterCsv {
                                 }
                             }
 
-                            if ui.add_sized(menu_btn_size, Button::new("View All CSV Files")).clicked() {
+                            if ui.add_sized(menu_btn_size, Button::new("View Files")).clicked() {
                                 self.screen = Screen::ViewCsv;
                             }
 
-                            if ui.add_sized(menu_btn_size, Button::new("Create New CSV File")).clicked() {
+                            if ui.add_sized(menu_btn_size, Button::new("Create CSV File")).clicked() {
                                 self.screen = Screen::CreateCsv {
                                     content: (
                                         "/todo/set path".to_string(),
@@ -235,12 +240,26 @@ impl CharterCsv {
                                 };
                             }
 
-                            if ui.add_sized(menu_btn_size, Button::new("Create Chart")).clicked() {
+                            if ui.add_sized(menu_btn_size, Button::new("Data Explorer")).clicked() {
                                 self.screen = Screen::CreateChart;
                             }
 
-                            if ui.add_sized(menu_btn_size, Button::new("View All Charts")).clicked() {
+                            if ui.add_sized(menu_btn_size, Button::new("View Charts")).clicked() {
                                 self.screen = Screen::ViewChart;
+                            }
+
+                            if ui.add_sized(menu_btn_size, Button::new("Save Session")).clicked() {
+                                let mut file_paths:Vec<String> = vec![];
+                                let mut pipelines:Vec<String> = vec![];
+                                for (path, _) in self.csv_files.iter() {
+                                    file_paths.push(path.to_string());
+                                }
+                                for pipeline in self.csvqb_pipelines.iter() {
+                                    let pipeline_str = pipeline.join(" ");
+                                    pipelines.push(pipeline_str);
+                                }
+
+                                save_session(file_paths, pipelines).expect("TODO: panic message");
                             }
 
                             if ui.add_sized(menu_btn_size, Button::new("Close Program")).clicked() {
@@ -250,7 +269,13 @@ impl CharterCsv {
                 });
                 ui.vertical_centered_justified(|ui| {
                     ui.add_space(ui.available_width() / 2.5);
-                    ui.label(RichText::new("sessions").color(Color32::BLACK));
+                    ui.heading(RichText::new("sessions").color(Color32::BLACK));
+                    ui.add_space(10.0);
+                    for (index, session) in self.sessions.iter().enumerate() {
+                        ui.label(RichText::new(format!("session name: {}", session.name)).color(Color32::BLACK));
+                        ui.label(RichText::new(format!("session name: {:?}", session.data)).color(Color32::BLACK));
+                        ui.add_space(12.0);
+                    }
                 })
             })
         });
@@ -258,14 +283,22 @@ impl CharterCsv {
 
     fn show_csv_list(&mut self, ctx: &Context) {
         let frame = egui::Frame::default()
-            .fill(Color32::from_rgb(67, 143, 173));
+            .fill(Color32::from_rgb(211, 211, 211));
+
         let mut files_to_remove: Option<usize> = None;
         let mut next_screen: Option<Screen> = None;
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
-            if ui.button("Back").clicked() {
-                next_screen = Some(Screen::Main);
-            }
+            egui::Frame::NONE
+                .fill(Color32::from_rgb(192, 192, 192))
+                .show(ui, |ui| {
+                   ui.horizontal_top(|ui| {
+                       if ui.add_sized((100.0, 35.0), Button::new("Home")).clicked() {
+                           next_screen = Some(Screen::Main);
+                       }
+                       ui.add_space(ui.available_width());
+                   })
+                });
 
             ui.add_space(21.0);
             for (index, file) in self.csv_files.iter().enumerate() {
@@ -306,39 +339,44 @@ impl CharterCsv {
         edit_index: Option<usize>
     ) -> Option<Screen> {
         let frame = egui::Frame::default()
-            .fill(Color32::from_rgb(67, 143, 173));
+            .fill(Color32::from_rgb(211, 211, 211));
         let mut next_screen = None;
         CentralPanel::default().frame(frame).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
-                    if let Some(index) = edit_index {
-                        self.csv_files[index] = content.clone();
-                    } else {
-                        self.csv_files.push(content.clone());
-                    }
+            egui::Frame::NONE
+                .fill(Color32::from_rgb(192, 192, 192))
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        if ui.add_sized((100.0, 35.0), Button::new("Home")).clicked() {
+                            next_screen = Some(Screen::Main);
+                        }
+                        if ui.add_sized((100.0, 35.0), Button::new("Save")).clicked() {
+                            if let Some(index) = edit_index {
+                                self.csv_files[index] = content.clone();
+                            } else {
+                                self.csv_files.push(content.clone());
+                            }
 
-                    if let Some(path) = rfd::FileDialog::new().add_filter(&content.0, &["csv"]).save_file() {
-                        let csv_content = grid2csv(&content.1);
-                        std::fs::write(path, csv_content).expect("Failed to save the file");
-                    }
+                            if let Some(path) = rfd::FileDialog::new().add_filter(&content.0, &["csv"]).save_file() {
+                                let csv_content = grid2csv(&content.1);
+                                std::fs::write(path, csv_content).expect("Failed to save the file");
+                            }
 
-                    next_screen = Some(Screen::ViewCsv);
-                }
+                            next_screen = Some(Screen::ViewCsv);
+                        }
 
-                if ui.button("Add Row").clicked() {
-                    content.1.push(vec!["".to_string(); content.1.get(0).map_or(0, |row| row.len())]);
-                }
+                        if ui.add_sized((100.0, 35.0), Button::new("Add Row")).clicked() {
+                            content.1.push(vec!["".to_string(); content.1.get(0).map_or(0, |row| row.len())]);
+                        }
 
-                if ui.button("Add Column").clicked() {
-                    for row in &mut content.1 {
-                        row.push("".to_string());
-                    }
-                }
-
-                if ui.button("Back").clicked() {
-                    next_screen = Some(Screen::Main);
-                }
-            });
+                        if ui.add_sized((100.0, 35.0), Button::new("Add Column")).clicked() {
+                            for row in &mut content.1 {
+                                row.push("".to_string());
+                            }
+                        }
+                        
+                        ui.add_space(ui.available_width());
+                    })
+                });
 
             ScrollArea::both()
                 .auto_shrink([false; 2])
@@ -398,42 +436,49 @@ impl CharterCsv {
 
     fn create_chart_screen(&mut self, ctx: &Context) {
         let frame = egui::Frame::default()
-            .fill(Color32::from_rgb(67, 143, 173));
+            .fill(Color32::from_rgb(211, 211, 211));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             egui::Frame::NONE
-                .fill(Color32::from_rgb(50, 112, 128))
+                .fill(Color32::from_rgb(192, 192, 192))
                 .show(ui, |ui| {
                     ui.horizontal_top(|ui| {
-                        if ui.add_sized((100.0, 35.0), Button::new("Back")).clicked() {
+                        if ui.add_sized((100.0, 35.0), Button::new("Home")).clicked() {
                             self.screen = Screen::Main;
                         }
 
                         ui.add_space(112.0);
-                        ui.menu_button("Files", |ui| {
-                            ScrollArea::vertical().max_width(369.0).max_height(f32::INFINITY).show(ui, |ui| {
-                                for (index, file) in self.csv_files.iter().enumerate() {
-                                    let file_name = &file.0;
-                                    let mut selected = self.selected_csv_files.iter().any(|f| f == &index);
+                        ui.horizontal(|ui| {
+                            ui.group(|ui| {
+                                ui.set_min_size(Vec2::new(100.0, 20.0));
+                                egui::ComboBox::from_label("Select File")
+                                    .width(120.0)
+                                    .show_ui(ui, |ui| {
+                                        for (index, file) in self.csv_files.iter().enumerate() {
+                                            let file_name = &file.0;
+                                            let mut selected = self.selected_csv_files.iter().any(|f| f == &index);
 
-                                    if ui.checkbox(&mut selected, file_name).clicked() {
-                                        if selected {
-                                            self.selected_csv_files.push(index);
-                                        } else {
-                                            self.selected_csv_files.retain(|f| f != &index);
+                                            if ui.checkbox(&mut selected, file_name).clicked() {
+                                                if selected {
+                                                    self.selected_csv_files.push(index);
+                                                } else {
+                                                    self.selected_csv_files.retain(|f| f != &index);
+                                                }
+                                            }
                                         }
-                                    }
-                                }
+                                    })
                             });
+
+
                         });
 
                         if ui.add_sized((100.0, 35.0), Button::new("reset query")).clicked() {
-                            self.csvqb_pipeline.clear();
+                            self.csvqb_pipelines.clear();
                             self.graph_data.clear();
                         }
 
                         if ui.add_sized((100.0, 35.0), Button::new("Execute Expression")).clicked() {
-                            for fields in self.csvqb_pipeline.iter() {
+                            for fields in self.csvqb_pipelines.iter() {
                                 let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
                                 println!("Result: {:?}", &result);
                                 if !result.is_empty() {
@@ -468,12 +513,12 @@ impl CharterCsv {
                         for (index, fields) in csv_columns.iter().enumerate() {
                             ui.heading(RichText::new(format!("{}, query #{}", self.csv_files[index].0.split("\\").last().unwrap_or("No file name"), index + 1)).color(Color32::BLACK));
                             ui.push_id(index, |ui| {
-                                let mut pipeline_str = self.csvqb_pipeline.get(index)
+                                let mut pipeline_str = self.csvqb_pipelines.get(index)
                                     .map(|pipeline| pipeline.join(" "))
                                     .unwrap_or_default();
 
                                 if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
-                                    self.csvqb_pipeline.insert(index, pipeline_str.split_whitespace().map(String::from).collect());
+                                    self.csvqb_pipelines.insert(index, pipeline_str.split_whitespace().map(String::from).collect());
                                 }
                             });
                             ui.push_id(index, |ui| {
@@ -486,10 +531,10 @@ impl CharterCsv {
                                             ui.horizontal_wrapped(|ui| {
                                                 for field in fields.iter() {
                                                     if ui.button(field).clicked() {
-                                                        if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                            self.csvqb_pipeline[index].push(field.to_string());
+                                                        if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                            self.csvqb_pipelines[index].push(field.to_string());
                                                         } else {
-                                                            self.csvqb_pipeline.push(vec![field.to_string()]);
+                                                            self.csvqb_pipelines.push(vec![field.to_string()]);
                                                         }
 
                                                     }
@@ -507,73 +552,73 @@ impl CharterCsv {
                                         .show(ui, |ui| {
                                             ui.horizontal_wrapped(|ui| {
                                                 if ui.button("(").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push("(".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push("(".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec!["(".to_string()]);
+                                                        self.csvqb_pipelines.push(vec!["(".to_string()]);
                                                     }
                                                 }
                                                 if ui.button(")").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push(")".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push(")".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec![")".to_string()]);
+                                                        self.csvqb_pipelines.push(vec![")".to_string()]);
                                                     }
                                                 }
                                                 if ui.button("GRP").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push("GRP".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push("GRP".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec!["GRP".to_string()]);
+                                                        self.csvqb_pipelines.push(vec!["GRP".to_string()]);
                                                     }
                                                 }
                                                 if ui.button("CSUM").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push("CSUM".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push("CSUM".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec!["CSUM".to_string()]);
+                                                        self.csvqb_pipelines.push(vec!["CSUM".to_string()]);
                                                     }
                                                 }
                                                 if ui.button("CAVG").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push("CAVG".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push("CAVG".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec!["CAVG".to_string()]);
+                                                        self.csvqb_pipelines.push(vec!["CAVG".to_string()]);
                                                     }
                                                 }
                                                 if ui.button("CCOUNT").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push("CCOUNT".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push("CCOUNT".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec!["CCOUNT".to_string()]);
+                                                        self.csvqb_pipelines.push(vec!["CCOUNT".to_string()]);
                                                     }
                                                 }
                                                 if ui.button("MUL").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push("MUL".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push("MUL".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec!["MUL".to_string()]);
+                                                        self.csvqb_pipelines.push(vec!["MUL".to_string()]);
                                                     }
                                                 }
                                                 if ui.button("=").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push("=".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push("=".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec!["=".to_string()]);
+                                                        self.csvqb_pipelines.push(vec!["=".to_string()]);
                                                     }
                                                 }
                                                 if ui.button(">").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push(">".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push(">".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec![">".to_string()]);
+                                                        self.csvqb_pipelines.push(vec![">".to_string()]);
                                                     }
                                                 }
                                                 if ui.button("<").clicked() {
-                                                    if self.csvqb_pipeline.len() > 0 && self.csvqb_pipeline.len()-1 >= index {
-                                                        self.csvqb_pipeline[index].push("<".to_string());
+                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                        self.csvqb_pipelines[index].push("<".to_string());
                                                     } else {
-                                                        self.csvqb_pipeline.push(vec!["<".to_string()]);
+                                                        self.csvqb_pipelines.push(vec!["<".to_string()]);
                                                     }
                                                 }
                                             });
@@ -601,28 +646,42 @@ impl CharterCsv {
 
     fn show_chart_screen(&mut self, ctx: &Context) {
         let frame = egui::Frame::default()
-            .fill(Color32::from_rgb(67, 143, 173));
+            .fill(Color32::from_rgb(211, 211, 211));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
-            if ui.button("Back").clicked() {
-                self.screen = Screen::CreateChart;
-            }
+
+            egui::Frame::NONE
+                .fill(Color32::from_rgb(192, 192, 192))
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        if ui.add_sized((100.0, 35.0), Button::new("Home")).clicked() {
+                            self.screen = Screen::Main;
+                        }
+                        if ui.add_sized((100.0, 35.0), Button::new("Explorer")).clicked() {
+                            self.screen = Screen::CreateChart;
+                        }
+
+                        ui.add_space(ui.available_width());
+                    })
+                });
+
+            ui.add_space(21.0);
 
             ui.horizontal(|ui| {
                 egui::ComboBox::from_label("Select Chart")
-                    .selected_text(&self.chart_style_test)
+                    .selected_text(&self.chart_style_prototype)
                     .show_ui(ui, |ui| {
-                        if ui.selectable_value(&mut self.chart_style_test, "Bar Graph".to_string(), "Bar Graph").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_test, "Histogram".to_string(), "Histogram").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_test, "Pie Chart".to_string(), "Pie Chart").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_test, "Scatter Plot".to_string(), "Scatter Plot").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_test, "Line Chart".to_string(), "Line Chart").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_test, "Flame Graph".to_string(), "Flame Graph").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_prototype, "Bar Graph".to_string(), "Bar Graph").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_prototype, "Histogram".to_string(), "Histogram").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_prototype, "Pie Chart".to_string(), "Pie Chart").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_prototype, "Scatter Plot".to_string(), "Scatter Plot").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_prototype, "Line Chart".to_string(), "Line Chart").clicked() {}
+                        if ui.selectable_value(&mut self.chart_style_prototype, "Flame Graph".to_string(), "Flame Graph").clicked() {}
                     });
             });
 
             let formatted_data = Some(format_graph_query(self.graph_data.clone()));
-            match self.chart_style_test.as_str() {
+            match self.chart_style_prototype.as_str() {
                 "Bar Graph" => {
                     let _ = draw_bar_graph(ui, formatted_data);
                 }
