@@ -9,11 +9,11 @@ use crate::charter_utilities::{csv2grid, CsvGrid};
 pub struct Session {
     pub(crate) name: String,
     pub(crate) files: Vec<String>,
-    pub(crate) pipelines: Vec<String>,
+    pub(crate) pipelines: Vec<Vec<String>>,
 }
 
 impl Session {
-    pub fn new(name: String, files: Vec<String>, pipelines: Vec<String>) -> Self {
+    pub fn new(name: String, files: Vec<String>, pipelines: Vec<Vec<String>>) -> Self {
         Self {
             name,
             files,
@@ -79,8 +79,8 @@ pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
 
                 let file = File::open(&file_path)?;
                 let reader = BufReader::new(file);
-                let mut csvqb_pipeline = Vec::new();
-                let mut csv_files = Vec::new();
+                let mut csvqb_pipeline = vec![vec![]];
+                let mut csv_files = vec![];
 
                 let mut is_csv_files = true;
                 for line in reader.lines() {
@@ -92,7 +92,7 @@ pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
                     if is_csv_files {
                         csv_files.push(line);
                     } else {
-                        csvqb_pipeline.push(line);
+                        csvqb_pipeline.push(line.split_whitespace().map(|s| s.to_string()).collect::<Vec<String>>());
                     }
                 }
 

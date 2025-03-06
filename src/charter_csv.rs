@@ -22,7 +22,10 @@ pub struct CharterCsvApp {
     pub file_sender: Sender<(String, Vec<Vec<String>>)>,
     chart_style_prototype: String,
     sessions: Vec<Session>,
-    current_session: String,
+    current_session: i8,
+    prev_session: i8,
+    show_session_name_popup: bool,
+    ssname: String
 }
 
 pub enum Screen {
@@ -49,12 +52,7 @@ impl Default for CharterCsvApp {
         let app = Self {
             texture: None,
             screen: Screen::Main,
-            csv_files: vec![(
-                "product_sheet.csv".to_string(),
-                vec![
-                    vec!["id".to_string(), "product_name".to_string(), "qty".to_string(), "price".to_string()]
-                ]
-            )],
+            csv_files: vec![],
             selected_csv_files: vec![],
             csvqb_pipelines: vec![],
             graph_data: vec![],
@@ -62,7 +60,10 @@ impl Default for CharterCsvApp {
             file_sender: tx,
             chart_style_prototype: "Histogram".to_string(),
             sessions: vec![],
-            current_session: "".to_string(),
+            current_session: -1,
+            prev_session: -2,
+            show_session_name_popup: false,
+            ssname: "".to_string(),
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -137,14 +138,25 @@ impl App for CharterCsvApp {
         }
 
         self.sessions = load_sessions_from_directory().expect("Failed to restore sessions");
-        if self.current_session == "".to_string() && self.sessions.len() > 0 {
-            let receiver = reconstruct_session(self.sessions[1].clone());
-            while let Ok((file_path, grid)) = receiver.recv() {
-                self.csv_files.push((file_path, grid));
-            }
-            self.current_session = self.sessions[1].name.clone(); //todo make dynamic
-        }
 
+
+        if self.current_session != self.prev_session && self.sessions.len() > 0 {
+            if self.current_session == -1 {
+                self.selected_csv_files.push(0);
+                let receiver = reconstruct_session(self.sessions[0].clone());
+                while let Ok((file_path, grid )) = receiver.recv() {
+                    self.csv_files.push((file_path, grid));
+                }
+            }
+            for fields in self.csvqb_pipelines.iter() {
+                let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
+                if !result.is_empty() {
+                    println!("result: {:?}", result);
+                    self.graph_data = result;
+                }
+            }
+            self.prev_session = self.current_session;
+        }
     }
 }
 impl CharterCsvApp {
@@ -270,28 +282,75 @@ impl CharterCsvApp {
                                     pipelines.push(pipeline_str);
                                 }
 
-                                save_session("Industrial Data".to_string(),file_paths, pipelines).expect("TODO: panic message");
+                                save_session(self.sessions[self.current_session as usize].name.to_string(),file_paths, pipelines).expect("TODO: panic message");
                             }
+                            if ui.add_sized(menu_btn_size, Button::new("New Session")).clicked() {
+                                self.show_session_name_popup = true;
+                            }
+                            if self.show_session_name_popup {
+                                egui::Window::new("Enter Session Name")
+                                    .collapsible(false)
+                                    .resizable(false)
+                                    .show(ctx, |ui| {
+                                        ui.text_edit_singleline(&mut self.ssname);
 
+                                        ui.horizontal(|ui| {
+                                            if ui.button("OK").clicked() {
+                                                save_session(self.ssname.to_owned(), vec![], vec![]).expect("TODO: panic message");
+                                                self.ssname.clear();
+                                                self.show_session_name_popup = false;
+                                            }
+                                            if ui.button("Cancel").clicked() {
+                                                self.show_session_name_popup = false;
+                                            }
+                                        });
+                                    });
+                            }
                             if ui.add_sized(menu_btn_size, Button::new("Close Program")).clicked() {
                                 ctx.send_viewport_cmd(ViewportCommand::Close);
                             }
                         });
                 });
                 ui.vertical_centered_justified(|ui| {
-                    ui.add_space(ui.available_height() / 4.0);
+                    ui.add_space(ui.available_height() / 1.9);
                     ui.heading(RichText::new("sessions").color(Color32::BLACK));
                     ui.add_space(10.0);
                     for (index, session) in self.sessions.iter().enumerate() {
-                        let name_color = if self.current_session == session.name {
-                            Color32::GREEN
+                        let name_color = if self.current_session == index as i8 {
+                            Color32::from_rgb( 34, 139, 34)
                         } else {
                             Color32::BLACK
                         };
-                        ui.label(RichText::new(format!("session name: {}", session.name)).color(name_color));
-                        ui.label(RichText::new(format!("session data: {:?}", session.files)).color(Color32::BLACK));
-                        ui.label(RichText::new(format!("session pipelines: {:?}", session.pipelines)).color(Color32::BLACK));
-                        ui.add_space(12.0);
+                        ui.push_id(index, |ui| {
+                            ui.group(|ui| {
+                                let _ = ui.group(|ui| {
+                                    ui.set_width(ui.available_width() / 1.4);
+                                    egui::Frame::default()
+                                        .show(ui, |ui| {
+                                            if ui.add(Button::new("load session")).clicked() {
+                                                self.current_session = index as i8;
+                                                self.csv_files.clear();
+                                                self.csvqb_pipelines.clear();
+                                                let receiver = reconstruct_session(self.sessions[index].clone());
+                                                while let Ok((file_path, grid)) = receiver.recv() {
+                                                    self.csv_files.push((file_path, grid));
+                                                }
+
+                                                for pipeline in self.sessions[index].pipelines.iter() {
+                                                    self.csvqb_pipelines.push((*pipeline).to_owned());
+                                                }
+
+
+                                            }
+                                            ui.label(RichText::new(format!("session name: {}", session.name)).color(name_color));
+                                            ui.label(RichText::new(format!("session data: {:?}", session.files)).color(Color32::BLACK));
+                                            ui.label(RichText::new(format!("session pipelines: {:?}", session.pipelines)).color(Color32::BLACK));
+                                            ui.add_space(12.0);
+                                        });
+                                });;
+
+                            });
+                        });
                     }
                 })
             })
