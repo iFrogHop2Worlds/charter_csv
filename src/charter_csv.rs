@@ -24,8 +24,8 @@ pub struct CharterCsvApp {
     sessions: Vec<Session>,
     current_session: i8,
     prev_session: i8,
-    show_session_name_popup: bool,
-    ssname: String
+    show_ss_name_popup: bool,
+    edit_ss_name: String
 }
 
 pub enum Screen {
@@ -62,8 +62,8 @@ impl Default for CharterCsvApp {
             sessions: vec![],
             current_session: -1,
             prev_session: -2,
-            show_session_name_popup: false,
-            ssname: "".to_string(),
+            show_ss_name_popup: false,
+            edit_ss_name: "".to_string(),
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -142,12 +142,17 @@ impl App for CharterCsvApp {
 
         if self.current_session != self.prev_session && self.sessions.len() > 0 {
             if self.current_session == -1 {
-                self.selected_csv_files.push(0);
                 let receiver = reconstruct_session(self.sessions[0].clone());
                 while let Ok((file_path, grid )) = receiver.recv() {
                     self.csv_files.push((file_path, grid));
                 }
             }
+
+            let ssi = self.current_session as usize;
+            if ssi > 0 && ssi < self.sessions.len() {
+                self.selected_csv_files = self.sessions[ssi].selected_files.clone();
+            }
+
             for fields in self.csvqb_pipelines.iter() {
                 let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
                 if !result.is_empty() {
@@ -281,27 +286,27 @@ impl CharterCsvApp {
                                     let pipeline_str = pipeline.join(" ");
                                     pipelines.push(pipeline_str);
                                 }
-
-                                save_session(self.sessions[self.current_session as usize].name.to_string(),file_paths, pipelines).expect("TODO: panic message");
+                                let ssi = self.current_session as usize;
+                                save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, self.selected_csv_files.clone()).expect("TODO: panic message");
                             }
                             if ui.add_sized(menu_btn_size, Button::new("New Session")).clicked() {
-                                self.show_session_name_popup = true;
+                                self.show_ss_name_popup = true;
                             }
-                            if self.show_session_name_popup {
+                            if self.show_ss_name_popup {
                                 egui::Window::new("Enter Session Name")
                                     .collapsible(false)
                                     .resizable(false)
                                     .show(ctx, |ui| {
-                                        ui.text_edit_singleline(&mut self.ssname);
+                                        ui.text_edit_singleline(&mut self.edit_ss_name);
 
                                         ui.horizontal(|ui| {
                                             if ui.button("OK").clicked() {
-                                                save_session(self.ssname.to_owned(), vec![], vec![]).expect("TODO: panic message");
-                                                self.ssname.clear();
-                                                self.show_session_name_popup = false;
+                                                save_session(self.edit_ss_name.to_owned(), vec![], vec![], vec![]).expect("TODO: panic message");
+                                                self.edit_ss_name.clear();
+                                                self.show_ss_name_popup = false;
                                             }
                                             if ui.button("Cancel").clicked() {
-                                                self.show_session_name_popup = false;
+                                                self.show_ss_name_popup = false;
                                             }
                                         });
                                     });

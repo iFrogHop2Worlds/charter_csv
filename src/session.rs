@@ -10,6 +10,7 @@ pub struct Session {
     pub(crate) name: String,
     pub(crate) files: Vec<String>,
     pub(crate) pipelines: Vec<Vec<String>>,
+    pub(crate) selected_files: Vec<usize>,
 }
 
 impl Session {
@@ -18,6 +19,7 @@ impl Session {
             name,
             files,
             pipelines,
+            selected_files: vec![],
         }
     }
 
@@ -42,7 +44,7 @@ impl Session {
         csvqb_pipelines
     }
 }
-pub fn save_session(session_name: String, csv_files: Vec<String>, pipelines: Vec<String>) -> io::Result<()> {
+pub fn save_session(session_name: String, csv_files: Vec<String>, pipelines: Vec<String>, selected_files: Vec<usize>) -> io::Result<()> {
     let sessions_dir = Path::new("C:/source/Charter_CSV/src/sessions");
     if !sessions_dir.exists() {
         fs::create_dir_all(sessions_dir)?;
@@ -51,12 +53,21 @@ pub fn save_session(session_name: String, csv_files: Vec<String>, pipelines: Vec
     let file_name = Path::new(&session_name).file_name().unwrap();
     let full_path = sessions_dir.join(file_name);
     let mut file = File::create(&full_path)?;
+    
     for file_path in csv_files.clone() {
         writeln!(file, "{}", file_path)?;
     }
+    
     writeln!(file)?;
+    
     for row in pipelines.clone() {
         writeln!(file, "{}", row)?;
+    }
+
+    writeln!(file)?;
+    
+    for index in selected_files {
+        writeln!(file, "{}", index)?;
     }
 
     Ok(())
@@ -81,18 +92,24 @@ pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
                 let reader = BufReader::new(file);
                 let mut csvqb_pipeline = vec![vec![]];
                 let mut csv_files = vec![];
+                let mut selected_files = vec![];
 
-                let mut is_csv_files = true;
+                let mut current_section = 0; 
                 for line in reader.lines() {
                     let line = line?;
                     if line.trim().is_empty() {
-                        is_csv_files = false;
+                        current_section += 1;
                         continue;
                     }
-                    if is_csv_files {
-                        csv_files.push(line);
-                    } else {
-                        csvqb_pipeline.push(line.split_whitespace().map(|s| s.to_string()).collect::<Vec<String>>());
+                    match current_section {
+                        0 => csv_files.push(line),
+                        1 => csvqb_pipeline.push(line.split_whitespace().map(|s| s.to_string()).collect()),
+                        2 => {
+                            if let Ok(index) = line.parse::<usize>() {
+                                selected_files.push(index);
+                            }
+                        }
+                        _ => break,
                     }
                 }
 
@@ -100,6 +117,7 @@ pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
                     name: file_name,
                     files: csv_files,
                     pipelines: csvqb_pipeline,
+                    selected_files,
                 });
             }
         }
@@ -116,7 +134,7 @@ pub fn reconstruct_session(
 
     thread::spawn(move || {
         for file_path in files {
-            if let Ok(content) = std::fs::read_to_string(&file_path) {
+            if let Ok(content) = fs::read_to_string(&file_path) {
                 let grid: CsvGrid = csv2grid(&content);
                 let _ = sender.send((file_path, grid));
             }
