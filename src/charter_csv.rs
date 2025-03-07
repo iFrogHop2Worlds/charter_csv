@@ -1,4 +1,3 @@
-use std::error::Error;
 use eframe::App;
 use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand};
 use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query};
@@ -13,13 +12,14 @@ use crate::session::{load_sessions_from_directory, reconstruct_session, save_ses
 
 pub struct CharterCsvApp {
     texture: Option<TextureHandle>,
-    pub screen: Screen,
-    pub csv_files: Vec<(String, CsvGrid)>, // files loaded in our program (path, 2d grid)
-    pub selected_csv_files: Vec<usize>,
-    pub csvqb_pipelines: Vec<Vec<String>>,
-    pub graph_data: Vec<Value>,
-    pub file_receiver: Receiver<(String, Vec<Vec<String>>)>,
-    pub file_sender: Sender<(String, Vec<Vec<String>>)>,
+    screen: Screen,
+    csv_files: Vec<(String, CsvGrid)>, // files loaded in our program (path, 2d grid)
+    selected_csv_files: Vec<usize>,
+    csvqb_pipelines: Vec<(usize, Vec<String>)>,
+    multi_pipeline_tracker: Vec<Vec<usize>>,
+    graph_data: Vec<Vec<Value>>,
+    file_receiver: Receiver<(String, Vec<Vec<String>>)>,
+    file_sender: Sender<(String, Vec<Vec<String>>)>,
     chart_style_prototype: String,
     sessions: Vec<Session>,
     current_session: i8,
@@ -55,6 +55,7 @@ impl Default for CharterCsvApp {
             csv_files: vec![],
             selected_csv_files: vec![],
             csvqb_pipelines: vec![],
+            multi_pipeline_tracker: vec![vec![]],
             graph_data: vec![],
             file_receiver: rx,
             file_sender: tx,
@@ -140,7 +141,7 @@ impl App for CharterCsvApp {
         self.sessions = load_sessions_from_directory().expect("Failed to restore sessions");
 
 
-        if self.current_session != self.prev_session && self.sessions.len() > 0 {
+        if self.current_session != self.prev_session && !self.sessions.is_empty() {
             if self.current_session == -1 {
                 let receiver = reconstruct_session(self.sessions[0].clone());
                 while let Ok((file_path, grid )) = receiver.recv() {
@@ -153,11 +154,10 @@ impl App for CharterCsvApp {
                 self.selected_csv_files = self.sessions[ssi].selected_files.clone();
             }
 
-            for fields in self.csvqb_pipelines.iter() {
+            for (index, fields) in self.csvqb_pipelines.iter() {
                 let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
                 if !result.is_empty() {
-                    println!("result: {:?}", result);
-                    self.graph_data = result;
+                    self.graph_data.insert(*index, result);
                 }
             }
             self.prev_session = self.current_session;
@@ -283,7 +283,7 @@ impl CharterCsvApp {
                                     file_paths.push(path.to_string());
                                 }
                                 for pipeline in self.csvqb_pipelines.iter() {
-                                    let pipeline_str = pipeline.join(" ");
+                                    let pipeline_str = pipeline.1.join(" ");
                                     pipelines.push(pipeline_str);
                                 }
                                 let ssi = self.current_session as usize;
@@ -342,7 +342,7 @@ impl CharterCsvApp {
                                                 }
 
                                                 for pipeline in self.sessions[index].pipelines.iter() {
-                                                    self.csvqb_pipelines.push((*pipeline).to_owned());
+                                                    self.csvqb_pipelines.push((index, (*pipeline).to_owned()));
                                                 }
 
 
@@ -559,12 +559,10 @@ impl CharterCsvApp {
                         }
 
                         if ui.add_sized((100.0, 35.0), Button::new("Execute Expression")).clicked() {
-                            for fields in self.csvqb_pipelines.iter() {
+                            for (index,fields) in self.csvqb_pipelines.iter() {
                                 let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
-                                println!("Result: {:?}", &result);
                                 if !result.is_empty() {
-                                    println!("Result: {:?}", &result);
-                                    self.graph_data = result;
+                                    self.graph_data.insert(*index, result); ;
                                 }
                             }
                         }
@@ -592,119 +590,138 @@ impl CharterCsvApp {
                 ui.vertical(|ui| {
                     ui.indent("left_margin", |ui| {
                         for (index, fields) in csv_columns.iter().enumerate() {
-                            ui.heading(RichText::new(format!("{}, query #{}", self.csv_files[index].0.split("\\").last().unwrap_or("No file name"), index + 1)).color(Color32::BLACK));
-                            ui.push_id(index, |ui| {
-                                let mut pipeline_str = self.csvqb_pipelines.get(index)
-                                    .map(|pipeline| pipeline.join(" "))
-                                    .unwrap_or_default();
+                            if !self.multi_pipeline_tracker.get(index).is_none() {
+                                for pipeline_index in &self.multi_pipeline_tracker[index] {
+                                    ui.heading(RichText::new(format!("{}, query #{}.{}", self.csv_files[index].0.split("\\").last().unwrap_or("No file name"), index + 1, pipeline_index)).color(Color32::BLACK));
+                                    ui.push_id(index, |ui| {
+                                        let mut pipeline_str = self.csvqb_pipelines.get(index)
+                                            .map(|pipeline| pipeline.1.join(" "))
+                                            .unwrap_or_default();
 
-                                if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
-                                    self.csvqb_pipelines.insert(index, pipeline_str.split_whitespace().map(String::from).collect());
-                                }
-                            });
-                            ui.push_id(index, |ui| {
-                                ui.group(|ui| {
-                                    ui.set_min_size(Vec2::new(ui.available_width()/3.0, 100.0));
-                                    ScrollArea::both()
-                                        .max_height(100.0)
-                                        .max_width(ui.available_width()/3.0)
-                                        .show(ui, |ui| {
-                                            ui.horizontal_wrapped(|ui| {
-                                                for field in fields.iter() {
-                                                    if ui.button(field).clicked() {
-                                                        if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                            self.csvqb_pipelines[index].push(field.to_string());
-                                                        } else {
-                                                            self.csvqb_pipelines.push(vec![field.to_string()]);
+                                        if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
+                                            self.csvqb_pipelines.insert(index, (index, pipeline_str.split_whitespace().map(String::from).collect()));
+                                        }
+                                    });
+                                    ui.push_id(index, |ui| {
+                                        ui.group(|ui| {
+                                            ui.set_min_size(Vec2::new(ui.available_width()/3.0, 100.0));
+                                            ScrollArea::both()
+                                                .max_height(100.0)
+                                                .max_width(ui.available_width()/3.0)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal_wrapped(|ui| {
+                                                        for field in fields.iter() {
+                                                            if ui.button(field).clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                    self.csvqb_pipelines[index].1.push(field.to_string());
+                                                                } else {
+                                                                    self.csvqb_pipelines.push((index, vec![field.to_string()]));
+                                                                }
+
+                                                            }
                                                         }
+                                                    });
+                                                });
+                                        });
+                                    });
+                                    ui.push_id(index, |ui| {
+                                        ui.group(|ui| {
+                                            ui.set_min_size(Vec2::new(300.0, 33.0));
+                                            ScrollArea::both()
+                                                .max_height(100.0)
+                                                .max_width(300.0)
+                                                .show(ui, |ui| {
+                                                    ui.horizontal_wrapped(|ui| {
+                                                        if ui.button("(").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push("(".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec!["(".to_string()]));
+                                                            }
+                                                        }
+                                                        if ui.button(")").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push(")".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec![")".to_string()]));
+                                                            }
+                                                        }
+                                                        if ui.button("GRP").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push("GRP".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec!["GRP".to_string()]));
+                                                            }
+                                                        }
+                                                        if ui.button("CSUM").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push("CSUM".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec!["CSUM".to_string()]));
+                                                            }
+                                                        }
+                                                        if ui.button("CAVG").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push("CAVG".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec!["CAVG".to_string()]));
+                                                            }
+                                                        }
+                                                        if ui.button("CCOUNT").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push("CCOUNT".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec!["CCOUNT".to_string()]));
+                                                            }
+                                                        }
+                                                        if ui.button("MUL").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push("MUL".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec!["MUL".to_string()]));
+                                                            }
+                                                        }
+                                                        if ui.button("=").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push("=".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec!["=".to_string()]));
+                                                            }
+                                                        }
+                                                        if ui.button(">").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push(">".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec![">".to_string()]));
+                                                            }
+                                                        }
+                                                        if ui.button("<").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
+                                                                self.csvqb_pipelines[index].1.push("<".to_string());
+                                                            } else {
+                                                                self.csvqb_pipelines.push((index, vec!["<".to_string()]));
+                                                            }
+                                                        }
+                                                    });
+                                                });
+                                        });
+                                    });
+                                }
+                            }
 
-                                                    }
-                                                }
-                                            });
-                                        });
-                                });
-                            });
+
                             ui.push_id(index, |ui| {
-                                ui.group(|ui| {
-                                    ui.set_min_size(Vec2::new(300.0, 33.0));
-                                    ScrollArea::both()
-                                        .max_height(100.0)
-                                        .max_width(300.0)
-                                        .show(ui, |ui| {
-                                            ui.horizontal_wrapped(|ui| {
-                                                if ui.button("(").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push("(".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec!["(".to_string()]);
-                                                    }
-                                                }
-                                                if ui.button(")").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push(")".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec![")".to_string()]);
-                                                    }
-                                                }
-                                                if ui.button("GRP").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push("GRP".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec!["GRP".to_string()]);
-                                                    }
-                                                }
-                                                if ui.button("CSUM").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push("CSUM".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec!["CSUM".to_string()]);
-                                                    }
-                                                }
-                                                if ui.button("CAVG").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push("CAVG".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec!["CAVG".to_string()]);
-                                                    }
-                                                }
-                                                if ui.button("CCOUNT").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push("CCOUNT".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec!["CCOUNT".to_string()]);
-                                                    }
-                                                }
-                                                if ui.button("MUL").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push("MUL".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec!["MUL".to_string()]);
-                                                    }
-                                                }
-                                                if ui.button("=").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push("=".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec!["=".to_string()]);
-                                                    }
-                                                }
-                                                if ui.button(">").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push(">".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec![">".to_string()]);
-                                                    }
-                                                }
-                                                if ui.button("<").clicked() {
-                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                        self.csvqb_pipelines[index].push("<".to_string());
-                                                    } else {
-                                                        self.csvqb_pipelines.push(vec!["<".to_string()]);
-                                                    }
-                                                }
-                                            });
-                                        });
-                                });
+                                if ui.button("add pipeline").clicked(){
+                                    if self.multi_pipeline_tracker.len() <= index {
+                                      self.multi_pipeline_tracker.push(vec![]);
+                                    }
+                                    if self.multi_pipeline_tracker.len() > index {
+                                        let i = self.multi_pipeline_tracker[index].len();
+                                        println!("i: {}", i+1);
+                                        let _ = self.multi_pipeline_tracker[index].push(i+1);
+                                    }
+
+                                };
                             });
                             ui.add_space(35.0);
                         }
@@ -761,28 +778,31 @@ impl CharterCsvApp {
                     });
             });
 
-            let formatted_data = Some(format_graph_query(self.graph_data.clone()));
-            match self.chart_style_prototype.as_str() {
-                "Bar Graph" => {
-                    let _ = draw_bar_graph(ui, formatted_data);
+            for graph_query in self.graph_data.iter() {
+                let formatted_data = Some(format_graph_query(graph_query.clone()));
+                match self.chart_style_prototype.as_str() {
+                    "Bar Graph" => {
+                        let _ = draw_bar_graph(ui, formatted_data);
+                    }
+                    "Pie Chart" => {
+                        let _ = draw_pie_chart(ui, formatted_data);
+                    }
+                    "Histogram" => {
+                        let _ = draw_histogram(ui, formatted_data);
+                    }
+                    "Scatter Plot" => {
+                        let _ = draw_scatter_plot(ui, formatted_data);
+                    }
+                    "Line Chart" => {
+                        let _ = draw_line_chart(ui, formatted_data);
+                    }
+                    "Flame Graph" => {
+                        let _ = draw_flame_graph(ui, formatted_data);
+                    }
+                    _ => {}
                 }
-                "Pie Chart" => {
-                    let _ = draw_pie_chart(ui, formatted_data);
-                }
-                "Histogram" => {
-                    let _ = draw_histogram(ui, formatted_data);
-                }
-                "Scatter Plot" => {
-                    let _ = draw_scatter_plot(ui, formatted_data);
-                }
-                "Line Chart" => {
-                    let _ = draw_line_chart(ui, formatted_data);
-                }
-                "Flame Graph" => {
-                    let _ = draw_flame_graph(ui, formatted_data);
-                }
-                _ => {}
             }
+
 
             if ui.button("Export Chart").clicked() {
                 // todo Billy

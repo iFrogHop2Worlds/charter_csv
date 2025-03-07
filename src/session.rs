@@ -90,11 +90,11 @@ pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
 
                 let file = File::open(&file_path)?;
                 let reader = BufReader::new(file);
-                let mut csvqb_pipeline = vec![vec![]];
+                let mut csvqb_pipeline = vec![];
                 let mut csv_files = vec![];
                 let mut selected_files = vec![];
 
-                let mut current_section = 0; 
+                let mut current_section = 0;
                 for line in reader.lines() {
                     let line = line?;
                     if line.trim().is_empty() {
@@ -103,7 +103,7 @@ pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
                     }
                     match current_section {
                         0 => csv_files.push(line),
-                        1 => csvqb_pipeline.push(line.split_whitespace().map(|s| s.to_string()).collect()),
+                        1 => csvqb_pipeline.push(line.trim_start().split_whitespace().map(|s| s.to_string()).collect()),
                         2 => {
                             if let Ok(index) = line.parse::<usize>() {
                                 selected_files.push(index);
