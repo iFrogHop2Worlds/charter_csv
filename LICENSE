@@ -1,32 +1,21 @@
-Charter CSV Software License
+MIT License
 
 Copyright (c) 2025 crowsec.software
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
-to use the Software for personal use, which may include your place of work. This software may not be redistributed for sale.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-1. The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-2. The Software may not be used for commercial purposes. Commercial use includes, but is not limited to, any instance where the
-Software is re-packaged and distributed for revenue, or to be incorporated into a product or service that is sold, leased, licensed,
-or distributed for a fee.
-
-3. The Software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of
-merchantability, fitness for a particular purpose, and noninfringement. In no event shall the authors or copyright holders be liable
-for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection
-with the Software or the use or other dealings in the Software.
-
-4. Users of this Software may freely share and distribute it for non-commercial purposes, provided that this license and the above
-copyright notice are included in all copies or substantial portions of the Software.
-
-5. Users are encouraged to contribute improvements to the Software, provided that any such contributions are made available under the same
-license terms as this original license.
-
-6. This license does not grant permission to use the trade names, trademarks, service marks, or product names of the copyright holder, except
-as required for reasonable and customary use in describing the origin of the Software.
-
-For inquiries regarding commercial use of this Software, please contact bill@crowsec.software
-
-2025 crowsec.software
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,20 +1,43 @@
-# CharterCsv
-Lets you easily load or create csv files and visualize the data with charts.
+# Charter csv
+Is a cross-platform program to navigate and visualize the data in your csv files. The main goal of this project
+is to provide a free tool that is highly performant both at the software level and user workflow level.
 
-You can generate a default chart for fast easy results. Or use our in house developed csv query language
-called csvqb to create fine-tuned data analysis via the aggregate, math, logical operators.
-
-csvqb is being developed with this project and is not yet complete.
-csvqb uses a hybrid infix notation to construct operation pipelines. Operations are performed
-on a 2dVector representation of the csv files. 
 
 # Features
-- Upload, create, edit, unload csv files
-- generate default graphs
-- construct complex queries (csvqb)
-- export graphs
+- Out of the box support for large files. No need to configure any special setup or pay for a premium plan 
+just to work with millions or billions of rows of data, you get that free. 
+- Multiple file support. Allowing for efficient and more interesting analysis. 
+- Sessions allow you to save and reconstruct your session state, for a consistent, reliable experience and greater depth of analysis.
+- Simple intuitive query pipeline builder. No need to learn any query languages.   
+- Simple csv file editor.
+- Export graphs and charts as images.
 
-Not all these features are implemented yet. Will update this and add docs once the feature list is completed.
+# CSVQB
+Were playing with the idea of using common math and logical operators to construct pipelines which can query and perform
+transformations on your data. Were calling this csvqb or 'csv query builder'.
 
+csvqb is in early development and far from complete. csvqb uses a hybrid infix and reverse polish notation approach
+to construct operation pipelines. Operations are performed on a 2dVector representation of the csv files. 
+This will later get abstracted into a crate.
 
-In the future we will add Ai to use natural language to construct queries making it easier for some.
+**todo - add csvqb examples + quickstart guide**
+
+# Future road map
+The core features of this project will remain free forever, and I strive to offer a free product that 
+outperforms it's competitors and is easier to use. In future releases more complex features will be introduced
+that will require paid plans. 
+
+Future versions will have:
+- Ai assistant to construct pipelines.
+- Device sync.
+- Simulations.
+- Improved file editor.
+- Cross file pipelines.
+- Additional graphing features.
+- Teams/Organization support.
+- Refactored codebase and continuous updates including performance optimizations.
+
+feel free to fork or make a pr if you think you have a meaningful contribution. Or just want to
+play with the code..
+
+**todo - add contribution guide** 
