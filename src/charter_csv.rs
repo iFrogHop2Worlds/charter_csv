@@ -13,7 +13,7 @@ use crate::session::{load_sessions_from_directory, reconstruct_session, save_ses
 pub struct CharterCsvApp {
     texture: Option<TextureHandle>,
     screen: Screen,
-    csv_files: Vec<(String, CsvGrid)>, 
+    csv_files: Vec<(String, CsvGrid)>,
     selected_csv_files: Vec<usize>,
     csvqb_pipelines: Vec<Vec<(usize, Vec<String>)>>,
     multi_pipeline_tracker: Vec<Vec<usize>>,
@@ -155,10 +155,7 @@ impl App for CharterCsvApp {
             }
 
             for (_index, pipelines) in self.csvqb_pipelines.iter().enumerate() {
-                println!("_index: {}", _index);
-                for(index, fields) in pipelines.iter() {
-                    println!("pipelines {:?}", &self.csvqb_pipelines);
-                    println!("index: {}", index);
+                for(_, fields) in pipelines.iter() {
                     let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
                     if !result.is_empty() {
                         self.graph_data.push(result);
@@ -290,18 +287,20 @@ impl CharterCsvApp {
                                 }
 
                                 for (_index, pipeline) in self.csvqb_pipelines.iter().enumerate() {
-                                    for(index, queryString) in pipeline.iter() {
-                                        let pipeline_str = queryString.join(" ");
+                                    for(index, query_string) in pipeline.iter() {
+                                        let pipeline_str = index.to_string() + &*" ".to_string() + &*query_string.join(" ");
                                         pipelines.push(pipeline_str);
                                     }
                                 }
 
                                 let ssi = self.current_session as usize;
-                                save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, self.selected_csv_files.clone()).expect("TODO: panic message");
+                                save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, self.selected_csv_files.clone()).expect("session save failed");
                             }
+
                             if ui.add_sized(menu_btn_size, Button::new("New Session")).clicked() {
                                 self.show_ss_name_popup = true;
                             }
+
                             if self.show_ss_name_popup {
                                 egui::Window::new("Enter Session Name")
                                     .collapsible(false)
@@ -311,7 +310,7 @@ impl CharterCsvApp {
 
                                         ui.horizontal(|ui| {
                                             if ui.button("OK").clicked() {
-                                                save_session(self.edit_ss_name.to_owned(), vec![], vec![], vec![]).expect("TODO: panic message");
+                                                save_session(self.edit_ss_name.to_owned(), vec![], vec![], vec![]).expect("session save failed");
                                                 self.edit_ss_name.clear();
                                                 self.show_ss_name_popup = false;
                                             }
@@ -326,47 +325,67 @@ impl CharterCsvApp {
                             }
                         });
                 });
+
                 ui.vertical_centered_justified(|ui| {
-                    ui.add_space(ui.available_height() / 2.1);
+                    ui.add_space(ui.available_height() / 3.0);
                     ui.heading(RichText::new("sessions").color(Color32::BLACK));
-                    ui.add_space(10.0);
-                    for (index, session) in self.sessions.iter().enumerate() {
-                        let name_color = if self.current_session == index as i8 {
-                            Color32::from_rgb( 34, 139, 34)
-                        } else {
-                            Color32::BLACK
-                        };
-                        ui.push_id(index, |ui| {
-                            ui.group(|ui| {
-                                let _ = ui.group(|ui| {
-                                    ui.set_width(ui.available_width() / 1.4);
-                                    egui::Frame::default()
-                                        .show(ui, |ui| {
-                                            if ui.add(Button::new("load session")).clicked() {
-                                                self.current_session = index as i8;
-                                                self.csv_files.clear();
-                                                self.csvqb_pipelines.clear();
-                                                let receiver = reconstruct_session(self.sessions[index].clone());
-                                                while let Ok((file_path, grid)) = receiver.recv() {
-                                                    self.csv_files.push((file_path, grid));
-                                                }
+                    ui.add_space(60.0);
+                    ui.vertical_centered(|ui| {
+                        ScrollArea::vertical()
+                            .max_height(620.0)
+                            .auto_shrink([false; 2])
+                            .show(ui, |ui| {
+                                for (index, session) in self.sessions.iter().enumerate() {
+                                    let name_color = if self.current_session == index as i8 {
+                                        Color32::from_rgb(34, 139, 34)
+                                    } else {
+                                        Color32::BLACK
+                                    };
+                                    ui.push_id(index, |ui| {
+                                        ui.group(|ui| {
+                                            let _ = ui.group(|ui| {
+                                                ui.set_width(ui.available_width() / 1.4);
+                                                egui::Frame::default()
+                                                    .show(ui, |ui| {
+                                                        if ui.add(Button::new("load session")).clicked() {
+                                                            self.current_session = index as i8;
+                                                            self.selected_csv_files.clear();
+                                                            self.csv_files.clear();
+                                                            self.csvqb_pipelines.clear();
+                                                            self.graph_data.clear();
 
-                                                for (_index, pipeline) in self.sessions[index].pipelines.iter().enumerate() {
-                                                    self.csvqb_pipelines[index].push((_index, (*pipeline).to_owned()));
-                                                }
+                                                            let receiver = reconstruct_session(self.sessions[index].clone());
+                                                            while let Ok((file_path, grid)) = receiver.recv() {
+                                                                self.csv_files.push((file_path, grid));
+                                                            }
 
+                                                            for (_index, pipeline) in self.sessions[index].pipelines.iter().enumerate() {
+                                                                if pipeline.is_empty() {
+                                                                    println!("Warning: Empty pipeline found, skipping...");
+                                                                    continue;
+                                                                }
 
-                                            }
-                                            ui.label(RichText::new(format!("session name: {}", session.name)).color(name_color));
-                                            ui.label(RichText::new(format!("session data: {:?}", session.files)).color(Color32::BLACK));
-                                            ui.label(RichText::new(format!("session pipelines: {:?}", session.pipelines)).color(Color32::BLACK));
-                                            ui.add_space(12.0);
+                                                                if let Some((first, elements)) = pipeline.split_first() {
+                                                                    if let Ok(i) = first.parse::<usize>() {
+                                                                        if self.csvqb_pipelines.is_empty() || self.csvqb_pipelines.len() <= _index {
+                                                                            self.csvqb_pipelines.push(vec![]);
+                                                                        }
+                                                                        self.csvqb_pipelines[i].push((i, elements.to_owned()));
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        ui.label(RichText::new(format!("session name: {}", session.name)).color(name_color));
+                                                        ui.label(RichText::new(format!("session data: {:?}", session.files)).color(Color32::BLACK));
+                                                        ui.label(RichText::new(format!("session pipelines: {:?}", session.pipelines)).color(Color32::BLACK));
+                                                        ui.add_space(12.0);
+                                                    });
+                                            });
                                         });
-                                });
-
+                                    });
+                                }
                             });
-                        });
-                    }
+                    });
                 })
             })
         });
@@ -564,17 +583,21 @@ impl CharterCsvApp {
                         });
 
                         if ui.add_sized((100.0, 35.0), Button::new("reset query")).clicked() {
-                            self.csvqb_pipelines.clear();
+                            self.csvqb_pipelines.iter_mut().for_each(|pipe| pipe.clear());
+
+                            if !self.sessions[self.current_session as usize].pipelines.is_empty(){
+                               self.sessions[self.current_session as usize].pipelines.iter_mut().for_each(|pipe| pipe.clear());
+                            }
                             self.graph_data.clear();
                         }
 
                         if ui.add_sized((100.0, 35.0), Button::new("Execute Expression")).clicked() {
+                            self.graph_data.clear();
                             for pipe in self.csvqb_pipelines.iter() {
                                 for fields in pipe.iter() {
                                     let result = process_csvqb_pipeline(&*fields.1, &self.selected_csv_files, &self.csv_files);
                                     if !result.is_empty() {
                                         self.graph_data.push(result);
-                                        println!("{:?}", &self.graph_data);
                                     }
                                 }
 
@@ -605,24 +628,33 @@ impl CharterCsvApp {
                     ui.indent("left_margin", |ui| {
                         for (index, fields) in csv_columns.iter().enumerate() {
                             if !self.multi_pipeline_tracker.get(index).is_none() {
-                                println!("OUTER {:?}", index);
                                 for pipeline_index in &self.multi_pipeline_tracker[index] {
-                                    ui.heading(RichText::new(format!("{}, query #{}.{}", self.csv_files[index].0.split("\\").last().unwrap_or("No file name"), index + 1, pipeline_index)).color(Color32::BLACK));
+                                    ui.heading(RichText::new(format!("{}, pipeline #{}.{}", self.csv_files[index].0
+                                        .split("\\")
+                                        .last()
+                                        .unwrap_or("No file name"), index + 1, pipeline_index))
+                                        .color(Color32::BLACK)
+                                    );
                                     ui.push_id(index + *pipeline_index, |ui| {
-                                        let mut pipeline_str;
-                                        if pipeline_index > &0 {
-                                            println!("INNER > 0:  {:?}", pipeline_index);
-                                            println!("QBPIPE:  {:?}", self.csvqb_pipelines);
-                                            pipeline_str = self.csvqb_pipelines[index].get(*pipeline_index)
-                                                .map(|pipeline| pipeline.1.join(" "))
-                                                .unwrap_or_else(|| "".to_string());
+                                        let mut pipeline_str = if let Some(pipelines) = self.csvqb_pipelines.get_mut(index) {
+                                            if let Some(pipeline) = pipelines.get(*pipeline_index) {
+                                                if !pipeline.1.is_empty() {
+                                                    pipeline.1.join(" ")
+                                                } else {
+                                                    String::new()
+                                                }
+                                            } else {
+                                                let new_pipeline = (*pipeline_index, vec![]);
+                                                pipelines.push(new_pipeline);
+                                                String::new()
+                                            }
                                         } else {
-                                            println!("INNER 0 {:?}", pipeline_index);
-                                            println!("QBPIPE:  {:?}", self.csvqb_pipelines);
-                                            pipeline_str = self.csvqb_pipelines.get(index)
-                                                .map(|pipeline| pipeline[*pipeline_index].1.join(" "))
-                                                .unwrap_or_else(|| "".to_string());
-                                        }
+                                            while self.csvqb_pipelines.len() <= index {
+                                                self.csvqb_pipelines.push(Vec::new());
+                                            }
+                                            self.csvqb_pipelines[index].push((*pipeline_index, vec![]));
+                                            String::new()
+                                        };
 
 
                                         if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
@@ -849,30 +881,33 @@ impl CharterCsvApp {
                     });
             });
 
-            for graph_query in self.graph_data.iter() {
-                let formatted_data = Some(format_graph_query(graph_query.clone()));
-                match self.chart_style_prototype.as_str() {
-                    "Bar Graph" => {
-                        let _ = draw_bar_graph(ui, formatted_data);
+            ScrollArea::both().show(ui, |ui| {
+                for graph_query in self.graph_data.iter().skip(1) {
+                    println!("{:?}", graph_query);
+                    let formatted_data = Some(format_graph_query(graph_query.clone()));
+                    match self.chart_style_prototype.as_str() {
+                        "Bar Graph" => {
+                            let _ = draw_bar_graph(ui, formatted_data);
+                        }
+                        "Pie Chart" => {
+                            let _ = draw_pie_chart(ui, formatted_data);
+                        }
+                        "Histogram" => {
+                            let _ = draw_histogram(ui, formatted_data);
+                        }
+                        "Scatter Plot" => {
+                            let _ = draw_scatter_plot(ui, formatted_data);
+                        }
+                        "Line Chart" => {
+                            let _ = draw_line_chart(ui, formatted_data);
+                        }
+                        "Flame Graph" => {
+                            let _ = draw_flame_graph(ui, formatted_data);
+                        }
+                        _ => {}
                     }
-                    "Pie Chart" => {
-                        let _ = draw_pie_chart(ui, formatted_data);
-                    }
-                    "Histogram" => {
-                        let _ = draw_histogram(ui, formatted_data);
-                    }
-                    "Scatter Plot" => {
-                        let _ = draw_scatter_plot(ui, formatted_data);
-                    }
-                    "Line Chart" => {
-                        let _ = draw_line_chart(ui, formatted_data);
-                    }
-                    "Flame Graph" => {
-                        let _ = draw_flame_graph(ui, formatted_data);
-                    }
-                    _ => {}
                 }
-            }
+            });
 
 
             if ui.button("Export Chart").clicked() {

@@ -68,8 +68,11 @@ pub fn load_icon() -> egui::IconData {
 }
 
 pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
-    let mut plot_data: Vec<PlotPoint> = Vec::new();
+    if graph_data.is_empty() {
+        return Vec::new(); // Return empty vector if input is empty
+    }
 
+    let mut plot_data: Vec<PlotPoint> = Vec::new();
     let mut i = 0;
     while i < graph_data.len() {
         match &graph_data[i] {
@@ -85,42 +88,47 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
                         });
                         i += 2;
                     } else {
-                        println!("{}", "Expected Field after Number".to_string());
+                        println!("Expected Field after Number");
+                        i += 1;
                     }
                 } else {
-                    println!("{}", "Incomplete data: Number without a corresponding Field".to_string());
+                    println!("Incomplete data: Number without a corresponding Field");
+                    i += 1;
                 }
             }
             Value::QueryResult(query_result) => {
                 if query_result.is_empty() {
-                    println!("{}", "QueryResult is empty".to_string());
+                    println!("QueryResult is empty");
+                    i += 1;
+                    continue;
                 }
 
-                let headers = &query_result[0];
-                for (idx, row) in query_result.iter().skip(1).enumerate() {
-                    if row.len() < headers.len() {
-                        println!("{}", "Mismatch in row and column sizes in QueryResult".to_string());
-                    }
-
-                    if let Ok(last_value) = row.last().unwrap().parse::<f64>() {
-                        plot_data.push(PlotPoint {
-                            label: row[0].to_string(),
-                            value: last_value,
-                            x: idx as f64,
-                            y: last_value,
-                            depth: 0.0,
-                        });
-                    } else {
-                        println!("{}", "Failed to parse last column value as a number in QueryResult".to_string());
+                if query_result.len() > 1 {
+                    for (idx, row) in query_result.iter().enumerate().skip(1) {
+                        if !row.is_empty() {
+                            if let Some(last_cell) = row.last() {
+                                if let Ok(last_value) = last_cell.parse::<f64>() {
+                                    plot_data.push(PlotPoint {
+                                        label: row.first()
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_default(),
+                                        value: last_value,
+                                        x: (idx - 1) as f64,
+                                        y: last_value,
+                                        depth: 0.0,
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
+                i += 1;
             }
-            _ => {}
+            _ => {
+                i += 1;
+            }
         }
-
-        i += 1;
     }
-
     plot_data
 }
 
