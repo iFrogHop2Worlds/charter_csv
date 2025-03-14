@@ -8,15 +8,15 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use image::{ImageReader};
 use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
-
+use std::collections::HashMap;
+use itertools::Itertools;
 
 pub struct CharterCsvApp {
     texture: Option<TextureHandle>,
     screen: Screen,
     csv_files: Vec<(String, CsvGrid)>,
-    selected_csv_files: Vec<usize>,
     csvqb_pipelines: Vec<Vec<(usize, Vec<String>)>>,
-    multi_pipeline_tracker: Vec<Vec<usize>>,
+    multi_pipeline_tracker: HashMap<usize, Vec<usize>>,
     graph_data: Vec<Vec<Value>>,
     file_receiver: Receiver<(String, Vec<Vec<String>>)>,
     file_sender: Sender<(String, Vec<Vec<String>>)>,
@@ -53,9 +53,8 @@ impl Default for CharterCsvApp {
             texture: None,
             screen: Screen::Main,
             csv_files: vec![],
-            selected_csv_files: vec![],
             csvqb_pipelines: vec![],
-            multi_pipeline_tracker: vec![vec![]],
+            multi_pipeline_tracker: HashMap::new(),
             graph_data: vec![],
             file_receiver: rx,
             file_sender: tx,
@@ -140,7 +139,6 @@ impl App for CharterCsvApp {
 
         self.sessions = load_sessions_from_directory().expect("Failed to restore sessions");
 
-
         if self.current_session != self.prev_session && !self.sessions.is_empty() {
             if self.current_session == -1 {
                 let receiver = reconstruct_session(self.sessions[0].clone());
@@ -150,18 +148,19 @@ impl App for CharterCsvApp {
             }
 
             let ssi = self.current_session as usize;
-            if ssi > 0 && ssi < self.sessions.len() {
-                self.selected_csv_files = self.sessions[ssi].selected_files.clone();
+            if ssi >= 0 && ssi < self.sessions.len() {
+                for file in &self.sessions[ssi].selected_files {
+                    self.multi_pipeline_tracker.insert(*file, vec![]);
+                }
             }
-
+            let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
             for (_index, pipelines) in self.csvqb_pipelines.iter().enumerate() {
-                for(_, fields) in pipelines.iter() {
-                    let result = process_csvqb_pipeline(fields, &self.selected_csv_files, &self.csv_files);
+                for (_, fields) in pipelines.iter() {
+                    let result = process_csvqb_pipeline(fields, &selected_files, &self.csv_files);
                     if !result.is_empty() {
                         self.graph_data.push(result);
                     }
                 }
-
             }
             self.prev_session = self.current_session;
         }
@@ -294,7 +293,8 @@ impl CharterCsvApp {
                                 }
 
                                 let ssi = self.current_session as usize;
-                                save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, self.selected_csv_files.clone()).expect("session save failed");
+                                let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
+                                save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, selected_files).expect("session save failed");
                             }
 
                             if ui.add_sized(menu_btn_size, Button::new("New Session")).clicked() {
@@ -349,7 +349,7 @@ impl CharterCsvApp {
                                                     .show(ui, |ui| {
                                                         if ui.add(Button::new("load session")).clicked() {
                                                             self.current_session = index as i8;
-                                                            self.selected_csv_files.clear();
+                                                            self.multi_pipeline_tracker.clear();
                                                             self.csv_files.clear();
                                                             self.csvqb_pipelines.clear();
                                                             self.graph_data.clear();
@@ -365,14 +365,7 @@ impl CharterCsvApp {
                                                                     continue;
                                                                 }
 
-                                                                if let Some((first, elements)) = pipeline.split_first() {
-                                                                    if let Ok(i) = first.parse::<usize>() {
-                                                                        if self.csvqb_pipelines.is_empty() || self.csvqb_pipelines.len() <= _index {
-                                                                            self.csvqb_pipelines.push(vec![]);
-                                                                        }
-                                                                        self.csvqb_pipelines[i].push((i, elements.to_owned()));
-                                                                    }
-                                                                }
+                                                                self.csvqb_pipelines.push(vec![(_index, pipeline.to_owned())]);
                                                             }
                                                         }
                                                         ui.label(RichText::new(format!("session name: {}", session.name)).color(name_color));
@@ -566,14 +559,24 @@ impl CharterCsvApp {
                                     .show_ui(ui, |ui| {
                                         for (index, file) in self.csv_files.iter().enumerate() {
                                             let file_name = &file.0;
-                                            let mut selected = self.selected_csv_files.iter().any(|f| f == &index);
+                                            let mut selected = self.multi_pipeline_tracker.contains_key(&index);
 
                                             if ui.checkbox(&mut selected, file_name).clicked() {
                                                 if selected {
-                                                    self.selected_csv_files.push(index);
+                                                    println!("selected file: {}", index);
+                                                    self.multi_pipeline_tracker.insert(index, vec![index]);
+                                                    self.csvqb_pipelines.push(vec![(index, vec![])]);
                                                 } else {
-                                                    self.selected_csv_files.retain(|f| f != &index);
+                                                    self.multi_pipeline_tracker.remove(&index);
+                                                    self.csvqb_pipelines.remove(index);
                                                 }
+                                                //self.multi_pipeline_tracker.insert(index,vec![]);
+                                                // while self.csvqb_pipelines.len() <= index {
+                                                //     self.csvqb_pipelines.insert(index, vec![]);
+                                                // }
+
+
+                                                println!("selected files: {:?}", self.multi_pipeline_tracker.keys());
                                             }
                                         }
                                     })
@@ -583,19 +586,20 @@ impl CharterCsvApp {
                         });
 
                         if ui.add_sized((100.0, 35.0), Button::new("reset query")).clicked() {
-                            self.csvqb_pipelines.iter_mut().for_each(|pipe| pipe.clear());
-
-                            if !self.sessions[self.current_session as usize].pipelines.is_empty(){
-                               self.sessions[self.current_session as usize].pipelines.iter_mut().for_each(|pipe| pipe.clear());
-                            }
+                            self.csvqb_pipelines.clear();
+                            self.multi_pipeline_tracker.clear();
                             self.graph_data.clear();
+                            if !self.sessions[self.current_session as usize].pipelines.is_empty(){
+                               self.sessions[self.current_session as usize].pipelines.clear();
+                            }
                         }
 
                         if ui.add_sized((100.0, 35.0), Button::new("Execute Expression")).clicked() {
                             self.graph_data.clear();
+                            let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
                             for pipe in self.csvqb_pipelines.iter() {
                                 for fields in pipe.iter() {
-                                    let result = process_csvqb_pipeline(&*fields.1, &self.selected_csv_files, &self.csv_files);
+                                    let result = process_csvqb_pipeline(&*fields.1, &selected_files, &self.csv_files);
                                     if !result.is_empty() {
                                         self.graph_data.push(result);
                                     }
@@ -611,14 +615,15 @@ impl CharterCsvApp {
                     });
                 });
 
-            let mut csv_columns: Vec<Vec<String>> = Vec::new();
-            for index in self.selected_csv_files.iter() {
+            let mut csv_columns: Vec<(usize, Vec<String>)> = Vec::new();
+            for index in self.multi_pipeline_tracker.keys() {
+                println!("CSVCOL index: {}", index);
                 if let Some(csv_file) = self.csv_files.get(*index) {
                     let column_titles = csv_file.1
                         .get(0)
                         .map(|row| row.clone())
                         .unwrap_or_default();
-                    csv_columns.push(column_titles);
+                    csv_columns.push((*index, column_titles));
                 }
             }
             ui.add_space(35.0);
@@ -626,53 +631,52 @@ impl CharterCsvApp {
                 ui.style_mut().spacing.indent = 30.0;
                 ui.vertical(|ui| {
                     ui.indent("left_margin", |ui| {
-                        for (index, fields) in csv_columns.iter().enumerate() {
-                            if !self.multi_pipeline_tracker.get(index).is_none() {
-                                for pipeline_index in &self.multi_pipeline_tracker[index] {
-                                    ui.heading(RichText::new(format!("{}, pipeline #{}.{}", self.csv_files[index].0
+                        for (index, fields) in csv_columns.iter() {
+                            let _index = index;
+                            if self.multi_pipeline_tracker.contains_key(&index) {
+                                println!("multi pipeline tracker: {:?}", self.multi_pipeline_tracker);
+                                for (index,pipeline_index) in self.multi_pipeline_tracker.get(&index).expect("failed").iter().enumerate() {
+                                    println!("pipeline index: {}:{:?}",_index, pipeline_index);
+                                    println!("csvqb_pipelines {:?}", self.csvqb_pipelines);
+                                    ui.heading(RichText::new(format!("{} #{}", self.csv_files[*pipeline_index].0
                                         .split("\\")
                                         .last()
-                                        .unwrap_or("No file name"), index + 1, pipeline_index))
+                                        .unwrap_or("No file name"), index + 1))
                                         .color(Color32::BLACK)
                                     );
-                                    ui.push_id(index + *pipeline_index, |ui| {
-                                        let mut pipeline_str = if let Some(pipelines) = self.csvqb_pipelines.get_mut(index) {
-                                            if let Some(pipeline) = pipelines.get(*pipeline_index) {
+
+                                    ui.push_id(index , |ui| {
+                                        let mut pipeline_str = if let Some(pipelines) = self.csvqb_pipelines.get_mut(*pipeline_index) {
+                                            if let Some(pipeline) = pipelines.get(index) {
                                                 if !pipeline.1.is_empty() {
                                                     pipeline.1.join(" ")
                                                 } else {
                                                     String::new()
                                                 }
                                             } else {
-                                                let new_pipeline = (*pipeline_index, vec![]);
-                                                pipelines.push(new_pipeline);
                                                 String::new()
                                             }
                                         } else {
-                                            while self.csvqb_pipelines.len() <= index {
-                                                self.csvqb_pipelines.push(Vec::new());
-                                            }
-                                            self.csvqb_pipelines[index].push((*pipeline_index, vec![]));
                                             String::new()
                                         };
 
 
                                         if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
-                                            while self.csvqb_pipelines.len() <= index {
-                                                self.csvqb_pipelines.push(Vec::new());
+                                            // while self.csvqb_pipelines.len() < _index {
+                                            //     self.csvqb_pipelines.push(Vec::new());
+                                            // }
+                                            // I think this functionality needs to move to add pipeline
+                                            while self.csvqb_pipelines[*pipeline_index].len() <= index {
+                                                self.csvqb_pipelines[*pipeline_index].push((index, Vec::new()));
                                             }
 
-                                            while self.csvqb_pipelines[index].len() <= *pipeline_index {
-                                                self.csvqb_pipelines[index].push((*pipeline_index, Vec::new()));
-                                            }
-
-                                            self.csvqb_pipelines[index][*pipeline_index].1 = pipeline_str
+                                            self.csvqb_pipelines[*pipeline_index][index].1 = pipeline_str
                                                 .split_whitespace()
                                                 .map(String::from)
                                                 .collect();
                                         }
                                     });
-                                    ui.push_id(index + *pipeline_index, |ui| {
+                                    ui.push_id(index , |ui| {
                                         ui.group(|ui| {
                                             ui.set_min_size(Vec2::new(ui.available_width()/3.0, 100.0));
                                             ScrollArea::both()
@@ -682,12 +686,12 @@ impl CharterCsvApp {
                                                     ui.horizontal_wrapped(|ui| {
                                                         for field in fields.iter() {
                                                             if ui.button(field).clicked() {
-                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index || pipeline_index > &0 {
-                                                                    if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                         pipeline.1.push(field.to_string());
                                                                     }
                                                                 } else {
-                                                                    self.csvqb_pipelines.push(vec![(index, vec![field.to_string()])]);
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec![field.to_string()])]);
                                                                 }
 
                                                             }
@@ -696,7 +700,7 @@ impl CharterCsvApp {
                                                 });
                                         });
                                     });
-                                    ui.push_id(index + *pipeline_index, |ui| {
+                                    ui.push_id(index , |ui| {
                                         ui.group(|ui| {
                                             ui.set_min_size(Vec2::new(300.0, 33.0));
                                             ScrollArea::both()
@@ -705,93 +709,93 @@ impl CharterCsvApp {
                                                 .show(ui, |ui| {
                                                     ui.horizontal_wrapped(|ui| {
                                                         if ui.button("(").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push("(".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec!["(".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["(".to_string()])]);
                                                             }
                                                         }
                                                         if ui.button(")").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push(")".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec![")".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec![")".to_string()])]);
                                                             }
                                                         }
                                                         if ui.button("GRP").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push("GRP".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec!["GRP".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["GRP".to_string()])]);
                                                             }
                                                         }
                                                         if ui.button("CSUM").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push("CSUM".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec!["CSUM".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["CSUM".to_string()])]);
                                                             }
                                                         }
                                                         if ui.button("CAVG").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push("CAVG".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec!["CAVG".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["CAVG".to_string()])]);
                                                             }
                                                         }
                                                         if ui.button("CCOUNT").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push("CCOUNT".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec!["CCOUNT".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["CCOUNT".to_string()])]);
                                                             }
                                                         }
                                                         if ui.button("MUL").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push("MUL".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec!["MUL".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["MUL".to_string()])]);
                                                             }
                                                         }
                                                         if ui.button("=").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push("=".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec!["=".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["=".to_string()])]);
                                                             }
                                                         }
                                                         if ui.button(">").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push(">".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec![">".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec![">".to_string()])]);
                                                             }
                                                         }
                                                         if ui.button("<").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= index {
-                                                                                                if let Some(pipeline) = self.csvqb_pipelines[index].get_mut(*pipeline_index) {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
                                                                     pipeline.1.push("<".to_string());
                                                                 }
                                                             } else {
-                                                                self.csvqb_pipelines.push(vec![(index, vec!["<".to_string()])]);
+                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["<".to_string()])]);
                                                             }
                                                         }
                                                     });
@@ -804,25 +808,17 @@ impl CharterCsvApp {
 
                             ui.push_id(index, |ui| {
                                 if ui.button("add pipeline").clicked(){
-                                    let mut success:bool = false;
-                                    if self.multi_pipeline_tracker.len() <= index {
-                                      self.multi_pipeline_tracker.push(vec![]);
-                                        success = true;
+
+                                    if self.multi_pipeline_tracker.contains_key(&index)  {
+                                        let _ = self.multi_pipeline_tracker.get_mut(&index).expect("REASON").push(*index);
                                     }
 
-                                    if self.multi_pipeline_tracker.len() > index {
-                                        let i = self.multi_pipeline_tracker[index].len();
-                                        let _ = self.multi_pipeline_tracker[index].push(i);
-                                        success = true;
-                                    }
+                                    // if !self.multi_pipeline_tracker.contains_key(&index) {
+                                    //     self.multi_pipeline_tracker.insert(_index,vec![]);
+                                    // }
 
-                                    if success {
-                                        while self.csvqb_pipelines.len() <= index {
-                                            self.csvqb_pipelines.push(Vec::new());
-                                        }
 
-                                        self.csvqb_pipelines[index].push((index, Vec::new()));
-                                    }
+                                    println!("pipe tracker: {:?}", self.multi_pipeline_tracker);
                                 };
                             });
                             ui.add_space(35.0);
