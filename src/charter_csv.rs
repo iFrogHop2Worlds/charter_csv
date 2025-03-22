@@ -150,8 +150,9 @@ impl App for CharterCsvApp {
             let ssi = self.current_session as usize;
             if ssi >= 0 && ssi < self.sessions.len() {
                 for file in &self.sessions[ssi].selected_files {
-                    self.multi_pipeline_tracker.insert(*file, vec![]);
+                    self.multi_pipeline_tracker.insert(*file, vec![*file]);
                 }
+
             }
             let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
             for (_index, pipelines) in self.csvqb_pipelines.iter().enumerate() {
@@ -159,6 +160,7 @@ impl App for CharterCsvApp {
                     let result = process_csvqb_pipeline(fields, &selected_files, &self.csv_files);
                     if !result.is_empty() {
                         self.graph_data.push(result);
+
                     }
                 }
             }
@@ -563,20 +565,13 @@ impl CharterCsvApp {
 
                                             if ui.checkbox(&mut selected, file_name).clicked() {
                                                 if selected {
-                                                    println!("selected file: {}", index);
                                                     self.multi_pipeline_tracker.insert(index, vec![index]);
                                                     self.csvqb_pipelines.push(vec![(index, vec![])]);
                                                 } else {
                                                     self.multi_pipeline_tracker.remove(&index);
                                                     self.csvqb_pipelines.remove(index);
                                                 }
-                                                //self.multi_pipeline_tracker.insert(index,vec![]);
-                                                // while self.csvqb_pipelines.len() <= index {
-                                                //     self.csvqb_pipelines.insert(index, vec![]);
-                                                // }
 
-
-                                                println!("selected files: {:?}", self.multi_pipeline_tracker.keys());
                                             }
                                         }
                                     })
@@ -596,10 +591,13 @@ impl CharterCsvApp {
 
                         if ui.add_sized((100.0, 35.0), Button::new("Execute Expression")).clicked() {
                             self.graph_data.clear();
-                            let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
-                            for pipe in self.csvqb_pipelines.iter() {
+                            let selected_files = &self.multi_pipeline_tracker.keys().copied().collect::<Vec<usize>>();
+                            for (index, pipe) in &self.multi_pipeline_tracker {
+                                if *index +1 < self.csvqb_pipelines.len() && self.csvqb_pipelines[*index+1].len() <= *index {
+                                    self.csvqb_pipelines[*index].push((*index, Vec::new()));
+                                }
                                 for fields in pipe.iter() {
-                                    let result = process_csvqb_pipeline(&*fields.1, &selected_files, &self.csv_files);
+                                    let result = process_csvqb_pipeline(&*self.csvqb_pipelines[*fields][0].1, selected_files, &self.csv_files);
                                     if !result.is_empty() {
                                         self.graph_data.push(result);
                                     }
@@ -617,7 +615,6 @@ impl CharterCsvApp {
 
             let mut csv_columns: Vec<(usize, Vec<String>)> = Vec::new();
             for index in self.multi_pipeline_tracker.keys() {
-                println!("CSVCOL index: {}", index);
                 if let Some(csv_file) = self.csv_files.get(*index) {
                     let column_titles = csv_file.1
                         .get(0)
@@ -631,211 +628,218 @@ impl CharterCsvApp {
                 ui.style_mut().spacing.indent = 30.0;
                 ui.vertical(|ui| {
                     ui.indent("left_margin", |ui| {
-                        for (index, fields) in csv_columns.iter() {
-                            let _index = index;
-                            if self.multi_pipeline_tracker.contains_key(&index) {
-                                println!("multi pipeline tracker: {:?}", self.multi_pipeline_tracker);
-                                for (index,pipeline_index) in self.multi_pipeline_tracker.get(&index).expect("failed").iter().enumerate() {
-                                    println!("pipeline index: {}:{:?}",_index, pipeline_index);
-                                    println!("csvqb_pipelines {:?}", self.csvqb_pipelines);
-                                    ui.heading(RichText::new(format!("{} #{}", self.csv_files[*pipeline_index].0
-                                        .split("\\")
-                                        .last()
-                                        .unwrap_or("No file name"), index + 1))
-                                        .color(Color32::BLACK)
-                                    );
+                        ScrollArea::vertical()
+                            .min_scrolled_height(900.0)
+                            .max_height(ui.available_height() -300.0)
+                            .max_width(ui.available_width())
+                            .show(ui, |ui| {
+                            for (index, fields) in csv_columns.iter() {
+                                let _index = index;
+                                if self.multi_pipeline_tracker.contains_key(&index) {
+                                    for (index, pipeline_index) in self.multi_pipeline_tracker.get(&index).expect("failed").iter().enumerate() {
+                                        ui.heading(RichText::new(format!("{} #{}", self.csv_files[*pipeline_index].0
+                                            .split("\\")
+                                            .last()
+                                            .unwrap_or("No file name"), index + 1))
+                                            .color(Color32::BLACK)
+                                        );
 
-                                    ui.push_id(index , |ui| {
-                                        let mut pipeline_str = if let Some(pipelines) = self.csvqb_pipelines.get_mut(*pipeline_index) {
-                                            if let Some(pipeline) = pipelines.get(index) {
-                                                if !pipeline.1.is_empty() {
-                                                    pipeline.1.join(" ")
+                                        ui.push_id(index, |ui| {
+                                            let mut pipeline_str = if let Some(pipelines) = self.csvqb_pipelines.get_mut(*pipeline_index) {
+                                                if let Some(pipeline) = pipelines.get(index) {
+                                                    if !pipeline.1.is_empty() {
+                                                        pipeline.1.join(" ")
+                                                    } else {
+                                                        String::new()
+                                                    }
                                                 } else {
                                                     String::new()
                                                 }
                                             } else {
                                                 String::new()
+                                            };
+
+                                            if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
+                                                while self.csvqb_pipelines[*pipeline_index].len() <= index {
+                                                    self.csvqb_pipelines[*pipeline_index].push((index, Vec::new()));
+                                                }
+
+                                                self.csvqb_pipelines[*pipeline_index][index].1 = pipeline_str
+                                                    .split_whitespace()
+                                                    .map(String::from)
+                                                    .collect();
                                             }
-                                        } else {
-                                            String::new()
-                                        };
-
-
-                                        if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
-                                            // while self.csvqb_pipelines.len() < _index {
-                                            //     self.csvqb_pipelines.push(Vec::new());
-                                            // }
-                                            // I think this functionality needs to move to add pipeline
-                                            while self.csvqb_pipelines[*pipeline_index].len() <= index {
-                                                self.csvqb_pipelines[*pipeline_index].push((index, Vec::new()));
-                                            }
-
-                                            self.csvqb_pipelines[*pipeline_index][index].1 = pipeline_str
-                                                .split_whitespace()
-                                                .map(String::from)
-                                                .collect();
-                                        }
-                                    });
-                                    ui.push_id(index , |ui| {
-                                        ui.group(|ui| {
-                                            ui.set_min_size(Vec2::new(ui.available_width()/3.0, 100.0));
-                                            ScrollArea::both()
-                                                .max_height(100.0)
-                                                .max_width(ui.available_width()/3.0)
-                                                .show(ui, |ui| {
-                                                    ui.horizontal_wrapped(|ui| {
-                                                        for field in fields.iter() {
-                                                            if ui.button(field).clicked() {
-                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() >= *pipeline_index {
+                                        });
+                                        ui.push_id(index, |ui| {
+                                            ui.group(|ui| {
+                                                ui.set_min_size(Vec2::new(ui.available_width() / 3.0, 100.0));
+                                                ScrollArea::both()
+                                                    .max_height(100.0)
+                                                    .max_width(ui.available_width() / 3.0)
+                                                    .show(ui, |ui| {
+                                                        ui.horizontal_wrapped(|ui| {
+                                                            for field in fields.iter() {
+                                                                if ui.button(field).clicked() {
+                                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() >= *pipeline_index {
+                                                                        if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                            pipeline.1.push(field.to_string());
+                                                                        }
+                                                                    } else {
+                                                                        self.csvqb_pipelines.push(vec![(*pipeline_index, vec![field.to_string()])]);
+                                                                    }
+                                                                }
+                                                            }
+                                                        });
+                                                    });
+                                            });
+                                        });
+                                        ui.push_id(index, |ui| {
+                                            ui.group(|ui| {
+                                                ui.set_min_size(Vec2::new(300.0, 33.0));
+                                                ScrollArea::both()
+                                                    .max_height(100.0)
+                                                    .max_width(300.0)
+                                                    .show(ui, |ui| {
+                                                        ui.horizontal_wrapped(|ui| {
+                                                            if ui.button("(").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
                                                                     if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                        pipeline.1.push(field.to_string());
+                                                                        pipeline.1.push("(".to_string());
                                                                     }
                                                                 } else {
-                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec![field.to_string()])]);
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["(".to_string()])]);
                                                                 }
-
                                                             }
-                                                        }
+                                                            if ui.button(")").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                        pipeline.1.push(")".to_string());
+                                                                    }
+                                                                } else {
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec![")".to_string()])]);
+                                                                }
+                                                            }
+                                                            if ui.button("GRP").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                        pipeline.1.push("GRP".to_string());
+                                                                    }
+                                                                } else {
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["GRP".to_string()])]);
+                                                                }
+                                                            }
+                                                            if ui.button("CSUM").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                        pipeline.1.push("CSUM".to_string());
+                                                                    }
+                                                                } else {
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["CSUM".to_string()])]);
+                                                                }
+                                                            }
+                                                            if ui.button("CAVG").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                        pipeline.1.push("CAVG".to_string());
+                                                                    }
+                                                                } else {
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["CAVG".to_string()])]);
+                                                                }
+                                                            }
+                                                            if ui.button("CCOUNT").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                        pipeline.1.push("CCOUNT".to_string());
+                                                                    }
+                                                                } else {
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["CCOUNT".to_string()])]);
+                                                                }
+                                                            }
+                                                            if ui.button("MUL").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                        pipeline.1.push("MUL".to_string());
+                                                                    }
+                                                                } else {
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["MUL".to_string()])]);
+                                                                }
+                                                            }
+                                                            if ui.button("=").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                        pipeline.1.push("=".to_string());
+                                                                    }
+                                                                } else {
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["=".to_string()])]);
+                                                                }
+                                                            }
+                                                            if ui.button(">").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                        pipeline.1.push(">".to_string());
+                                                                    }
+                                                                } else {
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec![">".to_string()])]);
+                                                                }
+                                                            }
+                                                            if ui.button("<").clicked() {
+                                                                if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                    if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                        pipeline.1.push("<".to_string());
+                                                                    }
+                                                                } else {
+                                                                    self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["<".to_string()])]);
+                                                                }
+                                                            }
+                                                        });
                                                     });
-                                                });
+                                            });
                                         });
-                                    });
-                                    ui.push_id(index , |ui| {
-                                        ui.group(|ui| {
-                                            ui.set_min_size(Vec2::new(300.0, 33.0));
-                                            ScrollArea::both()
-                                                .max_height(100.0)
-                                                .max_width(300.0)
-                                                .show(ui, |ui| {
-                                                    ui.horizontal_wrapped(|ui| {
-                                                        if ui.button("(").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push("(".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["(".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.button(")").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push(")".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec![")".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.button("GRP").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push("GRP".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["GRP".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.button("CSUM").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push("CSUM".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["CSUM".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.button("CAVG").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push("CAVG".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["CAVG".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.button("CCOUNT").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push("CCOUNT".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["CCOUNT".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.button("MUL").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push("MUL".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["MUL".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.button("=").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push("=".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["=".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.button(">").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push(">".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec![">".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.button("<").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len()-1 >= *pipeline_index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
-                                                                    pipeline.1.push("<".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["<".to_string()])]);
-                                                            }
-                                                        }
-                                                    });
-                                                });
-                                        });
-                                    });
-                                }
-                            }
-
-
-                            ui.push_id(index, |ui| {
-                                if ui.button("add pipeline").clicked(){
-
-                                    if self.multi_pipeline_tracker.contains_key(&index)  {
-                                        let _ = self.multi_pipeline_tracker.get_mut(&index).expect("REASON").push(*index);
                                     }
+                                }
 
-                                    // if !self.multi_pipeline_tracker.contains_key(&index) {
-                                    //     self.multi_pipeline_tracker.insert(_index,vec![]);
-                                    // }
+                                ui.push_id(index, |ui| {
+                                    if ui.button("add pipeline").clicked() {
+                                        if self.multi_pipeline_tracker.contains_key(&index) {
+                                            let _ = self.multi_pipeline_tracker.get_mut(&index).expect("REASON").push(*index);
 
-
-                                    println!("pipe tracker: {:?}", self.multi_pipeline_tracker);
-                                };
-                            });
-                            ui.add_space(35.0);
-                        }
+                                            while self.csvqb_pipelines.len() <= *index {
+                                                self.csvqb_pipelines.push(vec![]);
+                                            }
+                                            self.csvqb_pipelines[*index].push((*index, vec![]));
+                                        }
+                                    };
+                                });
+                                ui.add_space(35.0);
+                            }
+                        });
                     });
                 });
+
                 ui.vertical_centered_justified(|ui| {
                     ui.heading(RichText::new("Pipeline output").color(Color32::BLACK));
                     let expression_data = &self.graph_data;
-                    ScrollArea::vertical().show(ui, |ui: &mut Ui| {
-                        for row in expression_data {
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new(format!("{:?}", row)).color(Color32::BLACK));
-                            });
-                            ui.add_space(12.0);
-                        }
-                    });
+                    ScrollArea::vertical()
+                        .show(ui, |ui: &mut Ui| {
+                            for (index, row) in expression_data.iter().enumerate() {
+                                ui.group(|ui| {
+                                    egui::Frame::NONE
+                                        .fill(Color32::WHITE)
+                                        .show(ui, |ui| {
+                                            // Inner scroll area should only handle scroll when hovered
+                                            ScrollArea::vertical()
+                                                .max_height(300.0)
+                                                .id_source(index) // Ensure unique ID for each inner scroll
+                                                .enable_scrolling(true)
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new(format!("{:?}", row)).color(Color32::BLACK));
+                                                    ui.add_space(199.0);
+                                                });
+                                        });
+                                });
+                                ui.add_space(35.0);
+                            }
+                        });
                 })
             });
         });
@@ -878,8 +882,7 @@ impl CharterCsvApp {
             });
 
             ScrollArea::both().show(ui, |ui| {
-                for graph_query in self.graph_data.iter().skip(1) {
-                    println!("{:?}", graph_query);
+                for graph_query in self.graph_data.iter() {
                     let formatted_data = Some(format_graph_query(graph_query.clone()));
                     match self.chart_style_prototype.as_str() {
                         "Bar Graph" => {
