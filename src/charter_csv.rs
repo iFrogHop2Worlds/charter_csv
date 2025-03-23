@@ -592,17 +592,16 @@ impl CharterCsvApp {
                         if ui.add_sized((100.0, 35.0), Button::new("Execute Expression")).clicked() {
                             self.graph_data.clear();
                             let selected_files = &self.multi_pipeline_tracker.keys().copied().collect::<Vec<usize>>();
-                            for (index, pipe) in &self.multi_pipeline_tracker {
-                                if *index +1 < self.csvqb_pipelines.len() && self.csvqb_pipelines[*index+1].len() <= *index {
-                                    self.csvqb_pipelines[*index].push((*index, Vec::new()));
-                                }
-                                for fields in pipe.iter() {
-                                    let result = process_csvqb_pipeline(&*self.csvqb_pipelines[*fields][0].1, selected_files, &self.csv_files);
+                            for (index, pipelines) in self.csvqb_pipelines.iter().enumerate() {
+                                for (pipe_index, _) in pipelines.iter().enumerate() {
+                                    let result = process_csvqb_pipeline(
+                                        &*self.csvqb_pipelines[index][pipe_index].1,
+                                        selected_files,
+                                        &self.csv_files);
                                     if !result.is_empty() {
                                         self.graph_data.push(result);
                                     }
                                 }
-
                             }
                         }
 
@@ -826,10 +825,9 @@ impl CharterCsvApp {
                                     egui::Frame::NONE
                                         .fill(Color32::WHITE)
                                         .show(ui, |ui| {
-                                            // Inner scroll area should only handle scroll when hovered
                                             ScrollArea::vertical()
                                                 .max_height(300.0)
-                                                .id_source(index) // Ensure unique ID for each inner scroll
+                                                .id_source(index)
                                                 .enable_scrolling(true)
                                                 .show(ui, |ui| {
                                                     ui.label(RichText::new(format!("{:?}", row)).color(Color32::BLACK));
