@@ -161,11 +161,28 @@ pub fn draw_pie_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>)
                 let percentage = (data.value / total) as f32;
                 let angle = percentage * std::f32::consts::TAU;
 
-                let hue = (i as f32 * 0.618034) % 1.0;
+                let colour_set = vec![
+                    Color32::from_rgb(255, 0, 0),    // Red
+                    Color32::from_rgb(0, 255, 0),    // Green
+                    Color32::from_rgb(0, 0, 255),    // Blue
+                    Color32::from_rgb(128, 0, 128),  // Purple
+                    Color32::from_rgb(255, 192, 203), // Pink
+                    Color32::from_rgb(192, 192, 192), // Silver
+                    Color32::from_rgb(255, 215, 0),  // Gold
+                ];
+
+                let base_color = colour_set[i % colour_set.len()];
+
+                let hue = if i >= colour_set.len() {
+                    (i as f32 * 0.618034) % 1.0
+                } else {
+                    0.0
+                };
+
                 let color = Color32::from_rgb(
-                    (255.0 * hue.sin().abs()) as u8,
-                    (255.0 * (hue + 0.33).sin().abs()) as u8,
-                    (255.0 * (hue + 0.67).sin().abs()) as u8,
+                    (base_color.r() as f32 * hue.cos().abs() + 255.0 * (1.0 - hue.cos().abs())) as u8,
+                    (base_color.g() as f32 * hue.sin().abs() + 255.0 * (1.0 - hue.sin().abs())) as u8,
+                    (base_color.b() as f32 * (1.0 - hue).abs() + 255.0 * hue.abs()) as u8,
                 );
 
                 let mut points = Vec::new();
@@ -185,13 +202,13 @@ pub fn draw_pie_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>)
                     color,
                     Stroke::NONE,
                 )));
-
+                // mark new section begin
                 painter.add(Shape::LineSegment {
                     points: [
                         center,
                         pos2(
-                            center.x + radius * (start_angle + angle/2.0).cos(),
-                            center.y + radius * (start_angle + angle/2.0).sin(),
+                            center.x + radius * start_angle.cos(),
+                            center.y + radius * start_angle.sin(),
                         )
                     ],
                     stroke,
@@ -207,6 +224,17 @@ pub fn draw_pie_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>)
 
                 start_angle += angle;
             }
+            // close section
+            painter.add(Shape::LineSegment {
+                points: [
+                    center,
+                    pos2(
+                        center.x + radius * (start_angle).cos(),
+                        center.y + radius * (start_angle).sin(),
+                    )
+                ],
+                stroke,
+            });
         });
 
         Some(response)
@@ -331,15 +359,22 @@ pub fn draw_histogram(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>)
 pub fn draw_scatter_plot(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>) -> Option<egui::Response> {
     ScrollArea::horizontal().show(ui, |ui| {
         if let Some(graph_data) = &formatted_data {
-            let padding = 10.0;
+            let left_padding = 10.0;
+            let bottom_padding = 20.0;
+            let available_height: f64 = (ui.available_height() - bottom_padding) as f64;
+            let content_size = vec2(
+                ui.available_width() + left_padding,
+                available_height as f32 + bottom_padding
+            );
+
             let (response, painter) = ui.allocate_painter(
-                vec2(ui.available_width(), 600.0),
+                content_size,
                 Sense::hover(),
             );
 
             let rect = response.rect;
-            let plot_width = rect.width() - padding * 2.0;
-            let plot_height = rect.height() - padding * 2.0;
+            let plot_width = rect.width() - left_padding * 2.0;
+            let plot_height = available_height as f32;
 
             let x_values: Vec<f64> = graph_data.iter().map(|data| data.x).collect();
             let y_values: Vec<f64> = graph_data.iter().map(|data| data.y).collect();
@@ -352,26 +387,24 @@ pub fn draw_scatter_plot(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint
             let x_scale = plot_width / (x_max - x_min) as f32;
             let y_scale = plot_height / (y_max - y_min) as f32;
 
-            // Draw X-axis and Y-axis
             painter.add(Shape::line_segment(
                 [
-                    pos2(rect.min.x + padding, rect.min.y + padding + plot_height),
-                    pos2(rect.min.x + padding + plot_width, rect.min.y + padding + plot_height),
+                    pos2(rect.min.x + left_padding, rect.min.y + left_padding + plot_height),
+                    pos2(rect.min.x + left_padding + plot_width, rect.min.y + left_padding + plot_height),
                 ],
                 Stroke::new(1.0, Color32::BLACK),
             ));
             painter.add(Shape::line_segment(
                 [
-                    pos2(rect.min.x + padding, rect.min.y + padding),
-                    pos2(rect.min.x + padding, rect.min.y + padding + plot_height),
+                    pos2(rect.min.x + left_padding, rect.min.y + left_padding),
+                    pos2(rect.min.x + left_padding, rect.min.y + left_padding + plot_height),
                 ],
                 Stroke::new(1.0, Color32::BLACK),
             ));
 
-            // Draw scatter points
             for point in graph_data {
-                let screen_x = rect.min.x + padding + (point.x - x_min) as f32 * x_scale;
-                let screen_y = rect.min.y + padding + plot_height - (point.y - y_min) as f32 * y_scale;
+                let screen_x = rect.min.x + left_padding + (point.x - x_min) as f32 * x_scale;
+                let screen_y = rect.min.y + left_padding + plot_height - (point.y - y_min) as f32 * y_scale;
 
                 painter.add(Shape::circle_filled(
                     pos2(screen_x, screen_y),
@@ -390,15 +423,22 @@ pub fn draw_scatter_plot(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint
 pub fn draw_line_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>) -> Option<egui::Response> {
     ScrollArea::horizontal().show(ui, |ui| {
         if let Some(graph_data) = &formatted_data {
-            let padding = 10.0;
+            let left_padding = 10.0;
+            let bottom_padding = 20.0;
+            let available_height: f64 = (ui.available_height() - bottom_padding) as f64;
+            let content_size = vec2(
+                ui.available_width() + left_padding,
+                available_height as f32 + bottom_padding
+            );
+
             let (response, painter) = ui.allocate_painter(
-                vec2(ui.available_width(), 600.0),
+                content_size,
                 Sense::hover(),
             );
 
             let rect = response.rect;
-            let plot_width = rect.width() - padding * 2.0;
-            let plot_height = rect.height() - padding * 2.0;
+            let plot_width = rect.width() - left_padding * 2.0;
+            let plot_height = available_height as f32;
 
             let x_values: Vec<f64> = graph_data.iter().map(|data| data.x).collect();
             let y_values: Vec<f64> = graph_data.iter().map(|data| data.y).collect();
@@ -411,30 +451,28 @@ pub fn draw_line_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>
             let x_scale = plot_width / (x_max - x_min) as f32;
             let y_scale = plot_height / (y_max - y_min) as f32;
 
-            // Draw X-axis and Y-axis
             painter.add(Shape::line_segment(
                 [
-                    pos2(rect.min.x + padding, rect.min.y + padding + plot_height),
-                    pos2(rect.min.x + padding + plot_width, rect.min.y + padding + plot_height),
+                    pos2(rect.min.x + left_padding, rect.min.y + left_padding + plot_height),
+                    pos2(rect.min.x + left_padding + plot_width, rect.min.y + left_padding + plot_height),
                 ],
                 Stroke::new(1.0, Color32::BLACK),
             ));
             painter.add(Shape::line_segment(
                 [
-                    pos2(rect.min.x + padding, rect.min.y + padding),
-                    pos2(rect.min.x + padding, rect.min.y + padding + plot_height),
+                    pos2(rect.min.x + left_padding, rect.min.y + left_padding),
+                    pos2(rect.min.x + left_padding, rect.min.y + left_padding + plot_height),
                 ],
                 Stroke::new(1.0, Color32::BLACK),
             ));
 
             if graph_data.len() > 1 {
-                // Draw line chart
                 for pair in graph_data.windows(2) {
                     if let [start_point, end_point] = pair {
-                        let start_screen_x = rect.min.x + padding + (start_point.x - x_min) as f32 * x_scale;
-                        let start_screen_y = rect.min.y + padding + plot_height - (start_point.y - y_min) as f32 * y_scale;
-                        let end_screen_x = rect.min.x + padding + (end_point.x - x_min) as f32 * x_scale;
-                        let end_screen_y = rect.min.y + padding + plot_height - (end_point.y - y_min) as f32 * y_scale;
+                        let start_screen_x = rect.min.x + left_padding + (start_point.x - x_min) as f32 * x_scale;
+                        let start_screen_y = rect.min.y + left_padding + plot_height - (start_point.y - y_min) as f32 * y_scale;
+                        let end_screen_x = rect.min.x + left_padding + (end_point.x - x_min) as f32 * x_scale;
+                        let end_screen_y = rect.min.y + left_padding + plot_height - (end_point.y - y_min) as f32 * y_scale;
 
                         painter.add(Shape::line_segment(
                             [
@@ -449,8 +487,8 @@ pub fn draw_line_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>
 
             // Draw points
             for point in graph_data {
-                let screen_x = rect.min.x + padding + (point.x - x_min) as f32 * x_scale;
-                let screen_y = rect.min.y + padding + plot_height - (point.y - y_min) as f32 * y_scale;
+                let screen_x = rect.min.x + left_padding + (point.x - x_min) as f32 * x_scale;
+                let screen_y = rect.min.y + left_padding + plot_height - (point.y - y_min) as f32 * y_scale;
 
                 painter.add(Shape::circle_filled(
                     pos2(screen_x, screen_y),
@@ -469,36 +507,35 @@ pub fn draw_line_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>
 pub fn draw_flame_graph(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>) -> Option<egui::Response> {
     ScrollArea::horizontal().show(ui, |ui| {
         if let Some(graph_data) = &formatted_data {
-            //println!("========================{:?}", graph_data);
-            let padding = 10.0;
-            let available_width = ui.available_width() - (padding * 2.0);
-            let available_height = 600.0;
-            let block_height = 30.0;
+            let left_padding = 10.0;
+            let bottom_padding = 10.0;
+            let max_depth = graph_data.iter().map(|point| point.depth).fold(0.0, f32::max);
+            let total_value = graph_data.iter().map(|point| point.value as f32).sum::<f32>();
+            let total_width = total_value + (left_padding * 2.0);
+            let available_height: f32 = ui.available_height() -  bottom_padding;
+            let content_size = vec2(
+                total_width.max(ui.available_width()) + left_padding,
+                available_height + bottom_padding
+            );
 
             let (response, painter) = ui.allocate_painter(
-                vec2(available_width + padding * 2.0, available_height + padding * 2.0),
+                content_size,
                 Sense::hover(),
             );
 
             let rect = response.rect;
-
-            // Calculate max depth and total value for scaling
-            let max_depth = graph_data.iter().map(|point| point.depth).fold(0.0, f32::max);
-            let total_value = graph_data.iter().map(|point| point.value as f32).sum::<f32>();
-
-            // Draw blocks
+            let block_height = 30.0;
+            
             for point in graph_data {
-                let block_width = (point.value as f32 / total_value) * available_width;
-                let y_position = rect.min.y + padding + (max_depth - point.depth) * block_height;
-                let x_position = rect.min.x + padding + (point.x as f32 / total_value) * available_width;
+                let block_width = (point.value as f32 / total_value) * (content_size.x - left_padding * 2.0);
+                let y_position = rect.min.y + left_padding + (max_depth - point.depth) * block_height;
+                let x_position = rect.min.x + left_padding + (point.x as f32 / total_value) * (content_size.x - left_padding * 2.0);
 
-                // Create block rectangle
                 let block_rect = Rect::from_min_size(
                     pos2(x_position, y_position),
-                    vec2(block_width, block_height - 2.0), // -2 for spacing
+                    vec2(block_width, block_height - 2.0),
                 );
 
-                // Generate color based on depth
                 let hue = (point.depth * 0.1) % 1.0;
                 let color = Color32::from_rgb(
                     (255.0 * hue.sin().abs()) as u8,
@@ -506,10 +543,8 @@ pub fn draw_flame_graph(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>
                     (255.0 * (hue + 0.67).sin().abs()) as u8,
                 );
 
-                // Draw block
                 painter.rect_filled(block_rect, 2.0, color);
 
-                // Draw label if block is wide enough
                 if block_width > 40.0 {
                     painter.text(
                         pos2(x_position + 5.0, y_position + block_height / 2.0),
