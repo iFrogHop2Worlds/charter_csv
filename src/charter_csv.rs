@@ -1,5 +1,5 @@
 use eframe::App;
-use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand};
+use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin};
 use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
@@ -591,13 +591,15 @@ impl CharterCsvApp {
 
                         if ui.add_sized((100.0, 35.0), Button::new("Execute Expression")).clicked() {
                             self.graph_data.clear();
+
                             let selected_files = &self.multi_pipeline_tracker.keys().copied().collect::<Vec<usize>>();
-                            for (index, pipelines) in self.csvqb_pipelines.iter().enumerate() {
-                                for (pipe_index, _) in pipelines.iter().enumerate() {
+                            for (root, indexes) in self.multi_pipeline_tracker.iter() {
+                                for (i, _) in indexes.iter().enumerate() {
                                     let result = process_csvqb_pipeline(
-                                        &*self.csvqb_pipelines[index][pipe_index].1,
+                                        &*self.csvqb_pipelines[*root][i].1,
                                         selected_files,
-                                        &self.csv_files);
+                                        &self.csv_files
+                                    );
                                     if !result.is_empty() {
                                         self.graph_data.push(result);
                                     }
@@ -629,7 +631,7 @@ impl CharterCsvApp {
                     ui.indent("left_margin", |ui| {
                         ScrollArea::vertical()
                             .min_scrolled_height(900.0)
-                            .max_height(ui.available_height() -300.0)
+                            .max_height(ui.available_height())
                             .max_width(ui.available_width())
                             .show(ui, |ui| {
                             for (index, fields) in csv_columns.iter() {
@@ -880,29 +882,46 @@ impl CharterCsvApp {
             });
 
             ScrollArea::both().show(ui, |ui| {
-                for graph_query in self.graph_data.iter() {
+                for (index, graph_query) in self.graph_data.iter().enumerate() {
+                    let window_id = ui.make_persistent_id(format!("chart_window_{}", index));
                     let formatted_data = Some(format_graph_query(graph_query.clone()));
-                    match self.chart_style_prototype.as_str() {
-                        "Bar Graph" => {
-                            let _ = draw_bar_graph(ui, formatted_data);
-                        }
-                        "Pie Chart" => {
-                            let _ = draw_pie_chart(ui, formatted_data);
-                        }
-                        "Histogram" => {
-                            let _ = draw_histogram(ui, formatted_data);
-                        }
-                        "Scatter Plot" => {
-                            let _ = draw_scatter_plot(ui, formatted_data);
-                        }
-                        "Line Chart" => {
-                            let _ = draw_line_chart(ui, formatted_data);
-                        }
-                        "Flame Graph" => {
-                            let _ = draw_flame_graph(ui, formatted_data);
-                        }
-                        _ => {}
-                    }
+
+                    Window::new(format!("Chart {}", index + 1))
+                        .id(window_id)
+                        .resizable(true)
+                        .movable(true)
+                        .default_size(Vec2::new(600.0, 320.0))
+                        .min_width(200.0)
+                        .min_height(170.0)
+                        .default_height(320.0)
+                        .show(ui.ctx(), |ui| {
+                            Frame::NONE
+                                .fill(ui.style().visuals.window_fill())
+                                .inner_margin(Margin::symmetric(20.0 as i8, 20.0 as i8))
+                                .show(ui, |ui| {
+                                    match self.chart_style_prototype.as_str() {
+                                        "Bar Graph" => {
+                                            let _ = draw_bar_graph(ui, formatted_data);
+                                        }
+                                        "Pie Chart" => {
+                                            let _ = draw_pie_chart(ui, formatted_data);
+                                        }
+                                        "Histogram" => {
+                                            let _ = draw_histogram(ui, formatted_data);
+                                        }
+                                        "Scatter Plot" => {
+                                            let _ = draw_scatter_plot(ui, formatted_data);
+                                        }
+                                        "Line Chart" => {
+                                            let _ = draw_line_chart(ui, formatted_data);
+                                        }
+                                        "Flame Graph" => {
+                                            let _ = draw_flame_graph(ui, formatted_data);
+                                        }
+                                        _ => {}
+                                    }
+                                });
+                        });
                 }
             });
 

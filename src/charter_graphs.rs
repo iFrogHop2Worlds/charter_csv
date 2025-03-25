@@ -1,159 +1,213 @@
 use eframe::emath::{pos2, vec2, Align2, Rect};
 use eframe::epaint::{Color32, FontId, Stroke};
-use egui::{ScrollArea, Sense, Shape};
+use egui::{RichText, ScrollArea, Sense, Shape};
 use egui::epaint::{PathShape};
 use crate::charter_csv::PlotPoint;
-use crate::charter_utilities::draw_rotated_text;
+use crate::charter_utilities::{draw_rotated_text, TextPlacement};
 
 pub fn draw_bar_graph(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>) -> Option<egui::Response> {
-    ScrollArea::horizontal().show(ui, |ui| {
-        if let Some(graph_data) = &formatted_data {
-            let available_width = ui.available_width() * (ui.available_width() / graph_data.len() as f32);
-            let available_height: f64 = 600.0;
-            let bar_spacing = 2.0;
+    if let Some(graph_data) = &formatted_data {
+        let bar_width = 75.0;
+        let bar_spacing = 2.0;
+        let total_width = (graph_data.len() as f32) * (bar_width + bar_spacing);
+        let left_padding = 60.0;
+        let bottom_padding = 60.0;
 
-            let values: Vec<f64> = graph_data.iter()
-                .map(|data| data.value)
-                .collect();
-
-            let max_value = values.iter()
-                .max_by(|a, b| a.partial_cmp(b).unwrap())
-                .unwrap_or(&1.0);
-
-            let bar_width = ui.available_width() / graph_data.len() as f32;
-
-            let (response, painter) = ui.allocate_painter(
-                vec2(available_width, (available_height + 40.0) as f32),
-                Sense::hover(),
-            );
-
-            let rect = response.rect;
-
-            // Draw Y-axis label
-            painter.text(
-                pos2(rect.min.x - 40.0, rect.min.y + (available_height / 2.0) as f32),
-                Align2::CENTER_CENTER,
-                "Count",
-                FontId::default(),
-                Color32::BLACK,
-            );
-
-            // Draw bars and labels
-            for (i, (data, value)) in graph_data.iter().zip(values.iter()).enumerate() {
-                let value_normalized = value / max_value;
-                let height = value_normalized * available_height;
-                let x = rect.min.x + (i as f32 * (bar_width + bar_spacing));
-
-                // Draw bar
-                let bar_rect = Rect::from_min_size(
-                    pos2(x, rect.max.y - (height - 20.0) as f32),
-                    vec2(bar_width, height as f32),
+        ui.add_space(10.0); // Top padding
+        ScrollArea::horizontal()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                let available_height: f64 = (ui.available_height() - bottom_padding) as f64;
+                let content_size = vec2(
+                    total_width.max(ui.available_width()) + left_padding,
+                    available_height as f32 + bottom_padding
                 );
-                painter.rect_filled(bar_rect, 0.0, Color32::from_rgb(65, 155, 220));
 
-                // Draw value text
+                let (response, painter) = ui.allocate_painter(
+                    content_size,
+                    Sense::hover(),
+                );
+
+                let rect = response.rect;
+                let values: Vec<f64> = graph_data.iter()
+                    .map(|data| data.value)
+                    .collect();
+
+                let max_value = values.iter()
+                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                    .unwrap_or(&1.0);
+
+                let label_font = FontId::proportional(16.0);
+
                 painter.text(
-                    pos2(x + bar_width / 2.0, bar_rect.min.y - 5.0),
-                    Align2::CENTER_BOTTOM,
-                    format!("{:.0}", value),
-                    FontId::default(),
+                    pos2(rect.min.x + 20.0, rect.center().y),
+                    Align2::CENTER_CENTER,
+                    "Y",
+                    label_font.clone(),
                     Color32::BLACK,
                 );
 
-                // Draw rotated label
-                let shapes = draw_rotated_text(&painter, rect, &data.label, x, bar_width);
-                ui.painter_at(rect).extend(shapes);
-            }
+                painter.text(
+                    pos2(
+                        rect.center().x,
+                        rect.max.y - (bottom_padding / 2.0)
+                    ),
+                    Align2::CENTER_CENTER,
+                    "X",
+                    label_font,
+                    Color32::BLACK,
+                );
 
-            Some(response)
-        } else {
-            None
-        }
-    }).inner
+
+                let axes_color = Color32::BLACK;
+                let axis_thickness = 2.0;
+
+                painter.line_segment(
+                    [
+                        pos2(rect.min.x + left_padding, rect.max.y - bottom_padding),
+                        pos2(rect.min.x + left_padding, rect.min.y),
+                    ],
+                    Stroke::new(axis_thickness, axes_color),
+                );
+
+                painter.line_segment(
+                    [
+                        pos2(rect.min.x + left_padding, rect.max.y - bottom_padding),
+                        pos2(rect.max.x, rect.max.y - bottom_padding),
+                    ],
+                    Stroke::new(axis_thickness, axes_color),
+                );
+
+                for (i, (data, value)) in graph_data.iter().zip(values.iter()).enumerate() {
+                    let value_normalized = value / max_value;
+                    let height = value_normalized * (available_height - 20.0);
+                    let x = rect.min.x + left_padding + (i as f32 * (bar_width + bar_spacing));
+
+                    let bar_rect = Rect::from_min_size(
+                        pos2(x, rect.max.y - bottom_padding - height as f32),
+                        vec2(bar_width, height as f32),
+                    );
+                    painter.rect_filled(bar_rect, 0.0, Color32::from_rgb(65, 155, 220));
+
+                    painter.text(
+                        pos2(x + bar_width / 2.0, bar_rect.min.y - 5.0),
+                        Align2::CENTER_BOTTOM,
+                        format!("{:.0}", value),
+                        FontId::default(),
+                        Color32::BLACK,
+                    );
+
+                    let shapes = draw_rotated_text(
+                        &painter,
+                        rect,
+                        &data.label,
+                        x,
+                        bar_width,
+                        90.0,
+                        TextPlacement::Middle
+                    );
+                    ui.painter_at(rect).extend(shapes);
+                }
+
+                Some(response)
+            }).inner
+    } else {
+        None
+    }
 }
 
 pub fn draw_pie_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>) -> Option<egui::Response> {
     if let Some(graph_data) = &formatted_data {
-        let size = 400.0;  // Fixed size for the pie chart
+        let bottom_padding = 20.0;
+        let left_padding = 20.0;
+        let legend_width = 200.0;
+        let available_width = ui.available_width() - legend_width;
+        let available_height = ui.available_height() - 20.0;
+        let available_size = available_width.min(available_height);
+
+        let content_size = vec2(
+            available_size + legend_width + left_padding,
+            available_size + bottom_padding
+        );
+
         let (response, painter) = ui.allocate_painter(
-            vec2(size, size),
+            content_size,
             Sense::hover(),
         );
+
         let rect = response.rect;
-        let center = rect.center();
-        let radius = size / 2.5;
+        let center = pos2(
+            rect.min.x + (available_size / 2.0),
+            rect.center().y
+        );
+        let radius = (available_size / 2.5).min(available_size / 2.0);
 
         let total: f64 = graph_data.iter()
             .map(|data| data.value)
             .sum();
 
         let mut start_angle = 0.0f32;
-        let mut legend_y = rect.min.y;
-
         let stroke = Stroke::new(1.0, Color32::BLACK);
 
-        for (i, data) in graph_data.iter().enumerate() {
-            let percentage = (data.value / total) as f32;
-            let angle = percentage * std::f32::consts::TAU;
+        let legend_area = Rect::from_min_size(
+            pos2(center.x + radius + 20.0, rect.min.y),
+            vec2(legend_width - 20.0, available_size)
+        );
 
-            let hue = (i as f32 * 0.618034) % 1.0;
-            let color = Color32::from_rgb(
-                (255.0 * hue.sin().abs()) as u8,
-                (255.0 * (hue + 0.33).sin().abs()) as u8,
-                (255.0 * (hue + 0.67).sin().abs()) as u8,
-            );
+        let mut legend_ui = ui.child_ui(legend_area, egui::Layout::top_down_justified(egui::Align::LEFT), None);
 
-            // Create points for the sector
-            let mut points = Vec::new();
-            points.push(center); // Start from center
+        ScrollArea::vertical().show(&mut legend_ui, |ui| {
+            for (i, data) in graph_data.iter().enumerate() {
+                let percentage = (data.value / total) as f32;
+                let angle = percentage * std::f32::consts::TAU;
 
-            // Add points to create the arc
-            let steps = 32; // Number of points to approximate the arc
-            for j in 0..=steps {
-                let current_angle = start_angle + (angle * j as f32 / steps as f32);
-                points.push(pos2(
-                    center.x + radius * current_angle.cos(),
-                    center.y + radius * current_angle.sin(),
-                ));
+                let hue = (i as f32 * 0.618034) % 1.0;
+                let color = Color32::from_rgb(
+                    (255.0 * hue.sin().abs()) as u8,
+                    (255.0 * (hue + 0.33).sin().abs()) as u8,
+                    (255.0 * (hue + 0.67).sin().abs()) as u8,
+                );
+
+                let mut points = Vec::new();
+                points.push(center);
+
+                let steps = 32;
+                for j in 0..=steps {
+                    let current_angle = start_angle + (angle * j as f32 / steps as f32);
+                    points.push(pos2(
+                        center.x + radius * current_angle.cos(),
+                        center.y + radius * current_angle.sin(),
+                    ));
+                }
+
+                painter.add(Shape::Path(PathShape::convex_polygon(
+                    points,
+                    color,
+                    Stroke::NONE,
+                )));
+
+                painter.add(Shape::LineSegment {
+                    points: [
+                        center,
+                        pos2(
+                            center.x + radius * (start_angle + angle/2.0).cos(),
+                            center.y + radius * (start_angle + angle/2.0).sin(),
+                        )
+                    ],
+                    stroke,
+                });
+
+                // legend
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::hover());
+                    ui.painter().rect_filled(rect, 0.0, color);
+                    ui.label(RichText::new(format!("{}: {:.1}%", data.label, percentage * 100.0))
+                        .size(12.0));
+                });
+
+                start_angle += angle;
             }
-
-            // Draw the sector
-            painter.add(Shape::Path(PathShape::convex_polygon(
-                points,
-                color,
-                Stroke::NONE,
-            )));
-
-            // Draw the radial line
-            painter.add(Shape::LineSegment {
-                points: [
-                    center,
-                    pos2(
-                        center.x + radius * (start_angle + angle/2.0).cos(),
-                        center.y + radius * (start_angle + angle/2.0).sin(),
-                    )
-                ],
-                stroke,
-            });
-
-            // Draw legend
-            let legend_rect = Rect::from_min_size(
-                pos2(rect.max.x + 10.0, legend_y),
-                vec2(20.0, 20.0),
-            );
-            painter.rect_filled(legend_rect, 0.0, color);
-
-            painter.text(
-                pos2(legend_rect.max.x + 10.0, legend_y + 10.0),
-                Align2::LEFT_CENTER,
-                format!("{}: {:.1}%", data.label, percentage * 100.0),
-                FontId::default(),
-                Color32::BLACK,
-            );
-
-            start_angle += angle;
-            legend_y += 25.0;
-        }
+        });
 
         Some(response)
     } else {
@@ -163,93 +217,114 @@ pub fn draw_pie_chart(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>)
 
 
 pub fn draw_histogram(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>>) -> Option<egui::Response> {
-    ScrollArea::horizontal().show(ui, |ui| {
-        if let Some(graph_data) = &formatted_data {
-            let available_width = ui.available_width() * (ui.available_width() / graph_data.len() as f32);
-            let available_height: f64 = 600.0;
-            let bar_spacing = 2.0;
+    ScrollArea::horizontal()
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            if let Some(graph_data) = &formatted_data {
+                let left_padding = 60.0;
+                let bottom_padding = 60.0;
+                let top_padding = 20.0;
+                let bar_spacing = 2.0;
+                let values: Vec<f64> = graph_data.iter()
+                    .map(|data| data.value)
+                    .collect();
+                let max_value = values.iter()
+                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                    .unwrap_or(&1.0);
+                let bin_count = 10;
+                let min_value = values.iter().cloned().fold(f64::INFINITY, f64::min);
+                let bin_width = (max_value - min_value) / bin_count as f64;
+                let mut bins = vec![0.0; bin_count];
+                let bar_width = ui.available_width() / bin_count as f32;
+                let total_width = (bar_width + bar_spacing) * bin_count as f32;
+                let available_height = (ui.available_height() - bottom_padding - top_padding) as f64;
 
-            let values: Vec<f64> = graph_data.iter()
-                .map(|data| data.value)
-                .collect();
+                for &value in &values {
+                    let bin_index = ((value - min_value) / bin_width).floor() as usize;
+                    let bin_index = bin_index.min(bin_count - 1);
+                    bins[bin_index] += 1.0;
+                }
 
-            let max_value = values.iter()
-                .max_by(|a, b| a.partial_cmp(b).unwrap())
-                .unwrap_or(&1.0);
-
-            let bin_count = 10; // Number of bins for the histogram
-            let min_value = values.iter().cloned().fold(f64::INFINITY, f64::min);
-            let bin_width = (max_value - min_value) / bin_count as f64;
-
-            let mut bins = vec![0.0; bin_count];
-            for &value in &values {
-                let bin_index = ((value - min_value) / bin_width).floor() as usize;
-                let bin_index = bin_index.min(bin_count - 1); // Clamp to ensure we don't go out of bounds
-                bins[bin_index] += 1.0;
-            }
-
-            let bar_width = ui.available_width() / bin_count as f32;
-
-            let (response, painter) = ui.allocate_painter(
-                vec2(available_width, (available_height + 40.0) as f32),
-                Sense::hover(),
-            );
-
-            let rect = response.rect;
-
-            // Draw Y-axis label
-            painter.text(
-                pos2(rect.min.x - 40.0, rect.min.y + (available_height / 2.0) as f32),
-                Align2::CENTER_CENTER,
-                "Frequency",
-                FontId::default(),
-                Color32::BLACK,
-            );
-
-            // Draw Histrogram bins
-            for (i, &frequency) in bins.iter().enumerate() {
-                let frequency_normalized = frequency / bins.iter().cloned().fold(1.0, f64::max);
-                let height = frequency_normalized * available_height;
-                let x = rect.min.x + (i as f32 * (bar_width + bar_spacing));
-
-                // Draw bin (bar)
-                let bar_rect = Rect::from_min_size(
-                    pos2(x, rect.max.y - (height - 20.0) as f32),
-                    vec2(bar_width, height as f32),
+                let content_size = vec2(
+                    total_width.max(ui.available_width()) + left_padding,
+                    (available_height as f32) + bottom_padding + top_padding
                 );
-                painter.rect_filled(bar_rect, 0.0, Color32::from_rgb(135, 206, 250));
 
-                // Draw frequency value text
+                let (response, painter) = ui.allocate_painter(
+                    content_size,
+                    Sense::hover(),
+                );
+
+                let rect = response.rect;
+
                 painter.text(
-                    pos2(x + bar_width / 2.0, bar_rect.min.y - 5.0),
-                    Align2::CENTER_BOTTOM,
-                    format!("{:.0}", frequency),
-                    FontId::default(),
+                    pos2(rect.min.x + 15.0, rect.center().y),
+                    Align2::CENTER_CENTER,
+                    "Freq",
+                    FontId::proportional(14.0),
                     Color32::BLACK,
                 );
 
-                // Draw bin range label
-                let bin_start = min_value + (i as f64 * bin_width);
-                let bin_end = bin_start + bin_width;
-                let label = if i == bin_count - 1 {
-                    format!("[{:.1}, {:.1}]", bin_start, bin_end)
-                } else {
-                    format!("[{:.1}, {:.1})", bin_start, bin_end)
-                };
-                painter.text(
-                    pos2(x + bar_width / 2.0, rect.max.y + 5.0),
-                    Align2::CENTER_TOP,
-                    label,
-                    FontId::default(),
-                    Color32::BLACK,
+                let stroke = Stroke::new(1.0, Color32::BLACK);
+                painter.line_segment(
+                    [
+                        pos2(rect.min.x + left_padding, rect.min.y + top_padding),
+                        pos2(rect.min.x + left_padding, rect.max.y - bottom_padding),
+                    ],
+                    stroke,
                 );
-            }
+                painter.line_segment(
+                    [
+                        pos2(rect.min.x + left_padding, rect.max.y - bottom_padding),
+                        pos2(rect.max.x, rect.max.y - bottom_padding),
+                    ],
+                    stroke,
+                );
 
-            Some(response)
-        } else {
-            None
-        }
-    }).inner
+                // Draw bins
+                for (i, &frequency) in bins.iter().enumerate() {
+                    let frequency_normalized = frequency / bins.iter().cloned().fold(1.0, f64::max);
+                    let height = frequency_normalized * available_height;
+
+                    let bar_rect = Rect::from_min_size(
+                        pos2(
+                            rect.min.x + left_padding + (i as f32 * (bar_width + bar_spacing)),
+                            rect.max.y - bottom_padding - (height as f32)
+                        ),
+                        vec2(bar_width, height as f32),
+                    );
+
+                    painter.rect_filled(bar_rect, 0.0, Color32::from_rgb(135, 206, 250));
+
+                    painter.text(
+                        pos2(
+                            rect.min.x + left_padding + (i as f32 * (bar_width + bar_spacing)) + bar_width / 2.0,
+                            rect.max.y - bottom_padding - (height as f32) - 5.0
+                        ),
+                        Align2::CENTER_BOTTOM,
+                        format!("{:.0}", frequency),
+                        FontId::default(),
+                        Color32::BLACK,
+                    );
+
+                    let shapes = draw_rotated_text(
+                        &painter,
+                        rect,
+                        &graph_data[i].label,
+                        rect.min.x + left_padding + (i as f32 * (bar_width + bar_spacing)) + bar_width / 4.0,
+                        bar_width,
+                        16.0,
+                        TextPlacement::Bottom
+                    );
+                    painter.extend(shapes);
+
+                }
+
+                Some(response)
+            } else {
+                None
+            }
+        }).inner
 }
 
 

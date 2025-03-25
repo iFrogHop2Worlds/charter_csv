@@ -1,5 +1,5 @@
 use egui::epaint::TextShape;
-use egui::{emath, pos2, vec2, Color32, FontId, Painter, Rect, Shape, Stroke, WidgetText};
+use egui::{emath, pos2, vec2, Align2, Color32, FontId, Painter, Rect, ScrollArea, Sense, Shape, Stroke, WidgetText};
 use crate::charter_csv::PlotPoint;
 use crate::csvqb::Value;
 
@@ -18,31 +18,61 @@ pub fn grid2csv(grid: &CsvGrid) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+#[derive(Debug)]
+pub enum TextPlacement {
+    Top,
+    Middle,
+    Bottom,
+}
+
 pub fn draw_rotated_text(
     painter: &Painter,
     rect: Rect,
     data_label: &str,
     x: f32,
-    bar_width: f32
+    bar_width: f32,
+    rotation_degrees: f32,
+    placement: TextPlacement,
 ) -> Vec<Shape> {
     let text = WidgetText::from(data_label);
     let galley = painter.layout_no_wrap(
         text.text().to_string(),
-        FontId::default(),
+        FontId::proportional(12.0),
         Color32::BLACK,
     );
 
-    let pos = pos2(x + bar_width / 2.0, rect.max.y / 2.0);
-    let rot = emath::Rot2::from_angle(std::f32::consts::FRAC_PI_2 * 2.99);
+    let y_position = match placement {
+        TextPlacement::Top => rect.min.y + 20.0,
+        TextPlacement::Middle => rect.center().y,
+        TextPlacement::Bottom => rect.max.y - 20.0,
+    };
 
-    let offset = vec2(-galley.size().y / 2.0, -galley.size().x / 2.0);
+    let pos = pos2(x + bar_width / 2.0, y_position);
+
+    // Convert degrees to radians
+    let rotation_angle = (rotation_degrees.clamp(0.0, 360.0) * std::f32::consts::PI) / 180.0;
+    let rot = emath::Rot2::from_angle(rotation_angle);
+
+    let x_adjustment = 0.0;
+    let y_adjustment = match placement {
+        TextPlacement::Top => 0.0,
+        TextPlacement::Middle => -10.0,
+        TextPlacement::Bottom => -20.0,
+    };
+
+    let offset = vec2(
+        -galley.size().x + x_adjustment,
+        galley.size().y + y_adjustment
+    );
+
     let rotated_offset = rot * offset;
     let final_pos = pos + rotated_offset;
 
     vec![Shape::Text(TextShape {
         pos: final_pos,
         galley,
-        angle: std::f32::consts::FRAC_PI_2 * 2.99,
+        angle: rotation_angle,
         underline: Stroke::NONE,
         fallback_color: Color32::BLACK,
         override_text_color: Some(Color32::BLACK),
@@ -79,6 +109,7 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
             Value::Number(num) => {
                 if i + 1 < graph_data.len() {
                     if let Value::Field(label) = &graph_data[i + 1] {
+                        println!("gd -----> \n {:?}", &graph_data);
                         plot_data.push(PlotPoint {
                             label: label.to_string(),
                             value: *num,
@@ -105,13 +136,13 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
 
                 if query_result.len() > 1 {
                     for (idx, row) in query_result.iter().enumerate().skip(1) {
+                        let _row = row[..row.len() - 1].to_vec();
+                        let label = _row.join("-");
                         if !row.is_empty() {
                             if let Some(last_cell) = row.last() {
                                 if let Ok(last_value) = last_cell.parse::<f64>() {
                                     plot_data.push(PlotPoint {
-                                        label: row.first()
-                                            .map(|s| s.to_string())
-                                            .unwrap_or_default(),
+                                        label,//: row[0].to_string(),
                                         value: last_value,
                                         x: (idx - 1) as f64,
                                         y: last_value,
@@ -131,4 +162,5 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
     }
     plot_data
 }
+
 
