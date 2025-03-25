@@ -796,21 +796,89 @@ impl CharterCsvApp {
                                                     });
                                             });
                                         });
+
+
                                     }
                                 }
+                                ui.horizontal(|ui| {
+                                    ui.group(|ui| {
+                                        ui.push_id(index, |ui| {
+                                            if ui.button("add pipeline").clicked() {
+                                                if self.multi_pipeline_tracker.contains_key(&index) {
+                                                    let _ = self.multi_pipeline_tracker.get_mut(&index).expect("REASON").push(*index);
 
-                                ui.push_id(index, |ui| {
-                                    if ui.button("add pipeline").clicked() {
-                                        if self.multi_pipeline_tracker.contains_key(&index) {
-                                            let _ = self.multi_pipeline_tracker.get_mut(&index).expect("REASON").push(*index);
+                                                    while self.csvqb_pipelines.len() <= *index {
+                                                        self.csvqb_pipelines.push(vec![]);
+                                                    }
+                                                    self.csvqb_pipelines[*index].push((*index, vec![]));
+                                                }
+                                            };
+                                            ui.horizontal(|ui| {
+                                                egui::ComboBox::from_label("graph type")
+                                                    .selected_text(&self.chart_style_prototype)
+                                                    .show_ui(ui, |ui| {
+                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Bar Graph".to_string(), "Bar Graph").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
+                                                                    pipeline.1.insert(0, "Bar Graph".to_string());
+                                                                }
+                                                            } else {
+                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Bar Graph".to_string()])]);
+                                                            }
+                                                        }
+                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Histogram".to_string(), "Histogram").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
+                                                                    pipeline.1.insert(0, "Histogram".to_string());
+                                                                }
+                                                            } else {
+                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Histogram".to_string()])]);
+                                                            }
+                                                        }
+                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Pie Chart".to_string(), "Pie Chart").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
+                                                                    pipeline.1.insert(0, "Pie Chart".to_string());
+                                                                }
+                                                            } else {
+                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Pie Chart".to_string()])]);
+                                                            }
+                                                        }
+                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Scatter Plot".to_string(), "Scatter Plot").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
+                                                                    pipeline.1.insert(0, "Scatter Plot".to_string());
+                                                                }
+                                                            } else {
+                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Scatter Plot".to_string()])]);
+                                                            }
+                                                        }
+                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Line Chart".to_string(), "Line Chart").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
+                                                                    pipeline.1.insert(0, "Line Chart".to_string());
+                                                                }
+                                                            } else {
+                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Line Chart".to_string()])]);
+                                                            }
+                                                        }
+                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Flame Graph".to_string(), "Flame Graph(coming soon)").clicked() {
+                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
+                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
+                                                                    pipeline.1.insert(0, "Flame Graph".to_string());
+                                                                }
+                                                            } else {
+                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Flame Graph".to_string()])]);
+                                                            }
+                                                        }
+                                                    });
+                                            });
+                                        });
 
-                                            while self.csvqb_pipelines.len() <= *index {
-                                                self.csvqb_pipelines.push(vec![]);
-                                            }
-                                            self.csvqb_pipelines[*index].push((*index, vec![]));
-                                        }
-                                    };
+
+                                    });
                                 });
+
                                 ui.add_space(35.0);
                             }
                         });
@@ -824,7 +892,7 @@ impl CharterCsvApp {
                         .show(ui, |ui: &mut Ui| {
                             for (index, row) in expression_data.iter().enumerate() {
                                 ui.group(|ui| {
-                                    egui::Frame::NONE
+                                    Frame::NONE
                                         .fill(Color32::WHITE)
                                         .show(ui, |ui| {
                                             ScrollArea::vertical()
@@ -851,7 +919,7 @@ impl CharterCsvApp {
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
 
-            egui::Frame::NONE
+            Frame::NONE
                 .fill(Color32::from_rgb(192, 192, 192))
                 .show(ui, |ui| {
                     ui.horizontal_top(|ui| {
@@ -867,19 +935,6 @@ impl CharterCsvApp {
                 });
 
             ui.add_space(21.0);
-
-            ui.horizontal(|ui| {
-                egui::ComboBox::from_label("Select Chart")
-                    .selected_text(&self.chart_style_prototype)
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_value(&mut self.chart_style_prototype, "Bar Graph".to_string(), "Bar Graph").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_prototype, "Histogram".to_string(), "Histogram").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_prototype, "Pie Chart".to_string(), "Pie Chart").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_prototype, "Scatter Plot".to_string(), "Scatter Plot").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_prototype, "Line Chart".to_string(), "Line Chart").clicked() {}
-                        if ui.selectable_value(&mut self.chart_style_prototype, "Flame Graph".to_string(), "Flame Graph(coming soon)").clicked() {}
-                    });
-            });
 
             ScrollArea::both().show(ui, |ui| {
                 for (index, graph_query) in self.graph_data.iter().enumerate() {
@@ -899,23 +954,24 @@ impl CharterCsvApp {
                                 .fill(ui.style().visuals.window_fill())
                                 .inner_margin(Margin::symmetric(20.0 as i8, 20.0 as i8))
                                 .show(ui, |ui| {
-                                    match self.chart_style_prototype.as_str() {
-                                        "Bar Graph" => {
+                                    println!("{:?}", &graph_query[0]);
+                                    match &graph_query[0] {
+                                        Value::Field(graph_type) if graph_type == "Bar Graph" => {
                                             let _ = draw_bar_graph(ui, formatted_data);
                                         }
-                                        "Pie Chart" => {
+                                        Value::Field(graph_type) if graph_type == "Pie Chart" => {
                                             let _ = draw_pie_chart(ui, formatted_data);
                                         }
-                                        "Histogram" => {
+                                        Value::Field(graph_type) if graph_type == "Histogram" => {
                                             let _ = draw_histogram(ui, formatted_data);
                                         }
-                                        "Scatter Plot" => {
+                                        Value::Field(graph_type) if graph_type == "Scatter Plot" => {
                                             let _ = draw_scatter_plot(ui, formatted_data);
                                         }
-                                        "Line Chart" => {
+                                        Value::Field(graph_type) if graph_type == "Line Chart" => {
                                             let _ = draw_line_chart(ui, formatted_data);
                                         }
-                                        "Flame Graph" => {
+                                        Value::Field(graph_type) if graph_type == "Flame Graph" => {
                                             let _ = draw_flame_graph(ui, formatted_data);
                                         }
                                         _ => {}

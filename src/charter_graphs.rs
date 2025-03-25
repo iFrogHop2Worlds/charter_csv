@@ -525,7 +525,7 @@ pub fn draw_flame_graph(ui: &mut egui::Ui, formatted_data: Option<Vec<PlotPoint>
 
             let rect = response.rect;
             let block_height = 30.0;
-            
+
             for point in graph_data {
                 let block_width = (point.value as f32 / total_value) * (content_size.x - left_padding * 2.0);
                 let y_position = rect.min.y + left_padding + (max_depth - point.depth) * block_height;
