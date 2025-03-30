@@ -1,6 +1,6 @@
 use eframe::App;
 use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin};
-use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query};
+use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
 pub use std::thread;
@@ -94,6 +94,7 @@ impl Default for CharterCsvApp {
 
 impl App for CharterCsvApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        check_for_screenshot(ctx);
         if let Ok((path, grid)) = self.file_receiver.try_recv() {
             self.csv_files.push((path, grid));
         }
@@ -544,7 +545,7 @@ impl CharterCsvApp {
             .fill(Color32::from_rgb(211, 211, 211));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
-            egui::Frame::NONE
+            Frame::NONE
                 .fill(Color32::from_rgb(192, 192, 192))
                 .show(ui, |ui| {
                     ui.horizontal_top(|ui| {
@@ -881,6 +882,7 @@ impl CharterCsvApp {
 
                                 ui.add_space(35.0);
                             }
+                                ui.add_space(135.0);
                         });
                     });
                 });
@@ -894,10 +896,12 @@ impl CharterCsvApp {
                                 ui.group(|ui| {
                                     Frame::NONE
                                         .fill(Color32::WHITE)
+                                        .inner_margin(Margin::symmetric(60.0 as i8, 0.0 as i8))
                                         .show(ui, |ui| {
+                                            ui.label(RichText::new(format!("query #{}", index + 1)));
                                             ScrollArea::vertical()
                                                 .max_height(300.0)
-                                                .id_source(index)
+                                                .id_salt(index)
                                                 .enable_scrolling(true)
                                                 .show(ui, |ui| {
                                                     ui.label(RichText::new(format!("{:?}", row)).color(Color32::BLACK));
@@ -907,6 +911,7 @@ impl CharterCsvApp {
                                 });
                                 ui.add_space(35.0);
                             }
+                            ui.add_space(335.0);
                         });
                 })
             });
@@ -950,11 +955,13 @@ impl CharterCsvApp {
                         .min_height(170.0)
                         .default_height(320.0)
                         .show(ui.ctx(), |ui| {
+                            if ui.button("Save as .png").clicked() {
+                                save_window_as_png(ui.ctx(), window_id);
+                            }
                             Frame::NONE
                                 .fill(ui.style().visuals.window_fill())
                                 .inner_margin(Margin::symmetric(20.0 as i8, 20.0 as i8))
                                 .show(ui, |ui| {
-                                    println!("{:?}", &graph_query[0]);
                                     match &graph_query[0] {
                                         Value::Field(graph_type) if graph_type == "Bar Graph" => {
                                             let _ = draw_bar_graph(ui, formatted_data);
@@ -976,6 +983,7 @@ impl CharterCsvApp {
                                         }
                                         _ => {}
                                     }
+
                                 });
                         });
                 }

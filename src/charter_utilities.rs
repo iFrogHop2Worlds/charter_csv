@@ -2,6 +2,14 @@ use egui::epaint::TextShape;
 use egui::{emath, pos2, vec2, Align2, Color32, FontId, Painter, Rect, ScrollArea, Sense, Shape, Stroke, WidgetText};
 use crate::charter_csv::PlotPoint;
 use crate::csvqb::Value;
+use image::{ImageBuffer, Rgba};
+use rfd::FileDialog;
+use std::sync::mpsc;
+
+struct ScreenshotData {
+    image: egui::ColorImage,
+    pixels_per_point: f32,
+}
 
 pub type CsvGrid = Vec<Vec<String>>;
 pub fn csv2grid(content: &str) -> CsvGrid {
@@ -161,6 +169,64 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
         }
     }
     plot_data
+}
+
+pub fn save_window_as_png(ctx: &egui::Context, _window_id: egui::Id) {
+    // Request a screenshot
+    let ss = ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+    println!("Screenshot requested: {:?}", ss);
+
+    // Just set the waiting flag
+    ctx.data_mut(|data| {
+        data.insert_temp(egui::Id::new("waiting_for_screenshot"), true);
+    });
+}
+
+pub fn check_for_screenshot(ctx: &egui::Context) {
+    let waiting = ctx.data(|data| {
+        data.get_temp::<bool>(egui::Id::new("waiting_for_screenshot"))
+            .unwrap_or(false)
+    });
+
+    if waiting {
+        ctx.input(|i| {
+            for event in &i.raw.events {
+                if let egui::Event::Screenshot { image, .. } = event {
+                    let image_clone = image.clone();
+                    let ctx_clone = ctx.clone();
+
+                    std::thread::spawn(move || {
+                        if let Some(path) = FileDialog::new()
+                            .add_filter("PNG Image", &["png"])
+                            .set_file_name("graph.png")
+                            .save_file()
+                        {
+                            let width = image_clone.width();
+                            let height = image_clone.height();
+
+                            if let Err(e) = image::save_buffer(
+                                &path,
+                                image_clone.as_raw(),
+                                width as u32,
+                                height as u32,
+                                image::ColorType::Rgba8,
+                            ) {
+                                eprintln!("Failed to save image: {}", e);
+                            } else {
+                                println!("Successfully saved image");
+                            }
+                        }
+
+                        // Request a repaint to ensure the UI updates
+                        ctx_clone.request_repaint();
+                        ctx_clone.data_mut(|data| {
+                            data.remove::<bool>(egui::Id::new("waiting_for_screenshot"));
+                        });
+                    });
+                }
+            }
+        });
+    }
 }
 
 
