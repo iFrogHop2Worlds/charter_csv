@@ -176,12 +176,9 @@ pub fn save_window_as_png(ctx: &egui::Context, window_id: Id) {
     let mut screenshot_data = UserData::default();
     let _ = screenshot_data.data.insert(std::sync::Arc::new(window_id));
     let screenshot_cmd = egui::ViewportCommand::Screenshot(screenshot_data);
-    println!("screenshot");
-
     let window_rect = ctx.available_rect();
     let scale = ctx.pixels_per_point();
     let window_pos = ctx.screen_rect().max;
-    println!("rect {}", window_rect);
 
     ctx.data_mut(|data| {
         data.insert_temp(
@@ -195,37 +192,38 @@ pub fn save_window_as_png(ctx: &egui::Context, window_id: Id) {
 }
 
 pub fn check_for_screenshot(ctx: &egui::Context) {
-    let (waiting, target_id, window_rect, scale, _) = ctx.data(|data| {
+        let (waiting, target_id, window_rect, scale, _) = ctx.data(|data| {
         data.get_temp::<(bool, Id, Rect, f32, Pos2)>(Id::new("waiting_for_screenshot"))
             .unwrap_or((false, Id::NULL, Rect::NOTHING, 1.0, Pos2::ZERO))
     });
 
     if waiting {
-        let window_pos = ctx.memory(|mem| {
+        let (window_pos, width, height) = ctx.memory(|mem| {
             mem.area_rect(target_id)
-                .map(|rect| rect.center())
-                .unwrap_or(Pos2::ZERO)
+                .map(|rect| {
+                    let top_left = rect.left_top();
+                    let bottom_right = rect.right_bottom();
+                    let width = (bottom_right.x - top_left.x) * scale;
+                    let height = (bottom_right.y - top_left.y) * scale;
+                    (top_left, width as usize, height as usize)
+                })
+                .unwrap_or((Pos2::ZERO, 0, 0))
         });
 
-        let x = window_pos.x.round() as usize;
-        let y = window_pos.y.round() as usize;
+        let x = (window_pos.x.round()  * scale) as usize;
+        let y = (window_pos.y.round()  * scale) as usize;
 
         ctx.input(|i| {
             for event in &i.raw.events {
                 if let egui::Event::Screenshot { image, viewport_id, user_data, .. } = event {
-                    println!("Screenshot event");
                     if let Some(data) = user_data.data.as_ref() {
                         if let Some(window_id) = data.downcast_ref::<Id>() {
                             if window_id == &target_id {
-                                let width = window_rect.width().round() as usize;
-                                let height = window_rect.height().round() as usize;
 
                                 if x >= image.size[0] || y >= image.size[1] {
                                     eprintln!("Invalid crop coordinates: outside image bounds");
                                     return;
                                 }
-
-                                println!("Cropping frame at: x={}, y={}, w={}, h={}", x, y, width, height);
 
                                 let mut cropped_image = egui::ColorImage::new(
                                     [width, height],
@@ -244,7 +242,7 @@ pub fn check_for_screenshot(ctx: &egui::Context) {
                                         }
                                     }
                                 }
-                                
+
                                 if let Some(path) = FileDialog::new()
                                     .add_filter("PNG Image", &["png"])
                                     .set_file_name("graph.png")
