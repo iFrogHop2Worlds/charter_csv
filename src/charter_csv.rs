@@ -243,7 +243,7 @@ impl CharterCsvApp {
                             );
                             ui.add_space(75.0);
                             ui.heading(RichText::new("Charter CSV").color(Color32::BLACK));
-                            ui.label(RichText::new("navigate your data with speed and precision").color(Color32::BLACK));
+                            ui.label(RichText::new("Visualize your data with speed and precision easily").color(Color32::BLACK));
                             ui.add_space(20.0);
 
                             let menu_btn_size = Vec2::new(300.0, 30.0);
@@ -273,7 +273,7 @@ impl CharterCsvApp {
                                 };
                             }
 
-                            if ui.add_sized(menu_btn_size, Button::new("Data Explorer")).clicked() {
+                            if ui.add_sized(menu_btn_size, Button::new("Query Builder")).clicked() {
                                 self.screen = Screen::CreateChart;
                             }
 
@@ -455,7 +455,7 @@ impl CharterCsvApp {
                         if ui.add_sized((100.0, 35.0), Button::new("Home")).clicked() {
                             next_screen = Some(Screen::Main);
                         }
-                        if ui.add_sized((100.0, 35.0), Button::new("Save")).clicked() {
+                        if ui.add_sized((100.0, 35.0), Button::new("Save File")).clicked() {
                             if let Some(index) = edit_index {
                                 self.csv_files[index] = content.clone();
                             } else {
@@ -945,7 +945,7 @@ impl CharterCsvApp {
                 for (index, graph_query) in self.graph_data.iter().enumerate() {
                     let window_id = ui.make_persistent_id(format!("chart_window_{}", index));
                     let formatted_data = Some(format_graph_query(graph_query.clone()));
-
+                    //println!("window_id was created!! {:?}", window_id);
                     Window::new(format!("Chart {}", index + 1))
                         .id(window_id)
                         .resizable(true)

@@ -1,10 +1,11 @@
+use crate::egui::UserData;
 use egui::epaint::TextShape;
-use egui::{emath, pos2, vec2, Align2, Color32, FontId, Painter, Rect, ScrollArea, Sense, Shape, Stroke, WidgetText};
+use egui::{emath, pos2, vec2, Align2, Color32, FontId, Id, Painter, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, WidgetText};
+use image::imageops::crop;
 use crate::charter_csv::PlotPoint;
 use crate::csvqb::Value;
-use image::{ImageBuffer, Rgba};
 use rfd::FileDialog;
-use std::sync::mpsc;
+
 
 struct ScreenshotData {
     image: egui::ColorImage,
@@ -171,58 +172,108 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
     plot_data
 }
 
-pub fn save_window_as_png(ctx: &egui::Context, _window_id: egui::Id) {
-    // Request a screenshot
-    let ss = ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
-    println!("Screenshot requested: {:?}", ss);
+pub fn save_window_as_png(ctx: &egui::Context, window_id: Id) {
+    let mut screenshot_data = UserData::default();
+    let _ = screenshot_data.data.insert(std::sync::Arc::new(window_id));
+    let screenshot_cmd = egui::ViewportCommand::Screenshot(screenshot_data);
+    println!("screenshot");
 
-    // Just set the waiting flag
+    let window_rect = ctx.available_rect();
+    let scale = ctx.pixels_per_point();
+    let window_pos = ctx.screen_rect().max;
+    println!("rect {}", window_rect);
+
     ctx.data_mut(|data| {
-        data.insert_temp(egui::Id::new("waiting_for_screenshot"), true);
+        data.insert_temp(
+            Id::new("waiting_for_screenshot"),
+            (true, window_id, window_rect, scale, window_pos)
+        );
     });
+
+    let viewport_id = egui::ViewportId::default();
+    ctx.send_viewport_cmd_to(viewport_id, screenshot_cmd);
 }
 
 pub fn check_for_screenshot(ctx: &egui::Context) {
-    let waiting = ctx.data(|data| {
-        data.get_temp::<bool>(egui::Id::new("waiting_for_screenshot"))
-            .unwrap_or(false)
+    let (waiting, target_id, window_rect, scale, _) = ctx.data(|data| {
+        data.get_temp::<(bool, Id, Rect, f32, Pos2)>(Id::new("waiting_for_screenshot"))
+            .unwrap_or((false, Id::NULL, Rect::NOTHING, 1.0, Pos2::ZERO))
     });
 
     if waiting {
+        let window_pos = ctx.memory(|mem| {
+            mem.area_rect(target_id)
+                .map(|rect| rect.center())
+                .unwrap_or(Pos2::ZERO)
+        });
+
+        let x = window_pos.x.round() as usize;
+        let y = window_pos.y.round() as usize;
+
         ctx.input(|i| {
             for event in &i.raw.events {
-                if let egui::Event::Screenshot { image, .. } = event {
-                    let image_clone = image.clone();
-                    let ctx_clone = ctx.clone();
+                if let egui::Event::Screenshot { image, viewport_id, user_data, .. } = event {
+                    println!("Screenshot event");
+                    if let Some(data) = user_data.data.as_ref() {
+                        if let Some(window_id) = data.downcast_ref::<Id>() {
+                            if window_id == &target_id {
+                                let width = window_rect.width().round() as usize;
+                                let height = window_rect.height().round() as usize;
 
-                    std::thread::spawn(move || {
-                        if let Some(path) = FileDialog::new()
-                            .add_filter("PNG Image", &["png"])
-                            .set_file_name("graph.png")
-                            .save_file()
-                        {
-                            let width = image_clone.width();
-                            let height = image_clone.height();
+                                if x >= image.size[0] || y >= image.size[1] {
+                                    eprintln!("Invalid crop coordinates: outside image bounds");
+                                    return;
+                                }
 
-                            if let Err(e) = image::save_buffer(
-                                &path,
-                                image_clone.as_raw(),
-                                width as u32,
-                                height as u32,
-                                image::ColorType::Rgba8,
-                            ) {
-                                eprintln!("Failed to save image: {}", e);
-                            } else {
-                                println!("Successfully saved image");
+                                println!("Cropping frame at: x={}, y={}, w={}, h={}", x, y, width, height);
+
+                                let mut cropped_image = egui::ColorImage::new(
+                                    [width, height],
+                                    egui::Color32::TRANSPARENT
+                                );
+
+                                let max_width = width.min(image.size[0] - x);
+                                let max_height = height.min(image.size[1] - y);
+
+                                for dy in 0..max_height {
+                                    for dx in 0..max_width {
+                                        let src_idx = (y + dy) * image.size[0] + (x + dx);
+                                        let dst_idx = dy * width + dx;
+                                        if src_idx < image.pixels.len() && dst_idx < cropped_image.pixels.len() {
+                                            cropped_image.pixels[dst_idx] = image.pixels[src_idx];
+                                        }
+                                    }
+                                }
+                                
+                                if let Some(path) = FileDialog::new()
+                                    .add_filter("PNG Image", &["png"])
+                                    .set_file_name("graph.png")
+                                    .save_file()
+                                {
+                                    let image_clone = cropped_image;
+                                    let mut ctx_clone = ctx.clone();
+
+                                    std::thread::spawn(move || {
+                                        if let Err(e) = image::save_buffer(
+                                            &path,
+                                            image_clone.as_raw(),
+                                            width as u32,
+                                            height as u32,
+                                            image::ColorType::Rgba8,
+                                        ) {
+                                            eprintln!("Failed to save image: {}", e);
+                                        }
+                                        ctx_clone.data_mut(|data| {
+                                            data.remove::<(bool, Id, Rect, f32, Pos2)>(
+                                                Id::new("waiting_for_screenshot")
+                                            );
+                                        });
+                                        ctx_clone.request_repaint();
+                                    });
+                                }
                             }
                         }
-
-                        // Request a repaint to ensure the UI updates
-                        ctx_clone.request_repaint();
-                        ctx_clone.data_mut(|data| {
-                            data.remove::<bool>(egui::Id::new("waiting_for_screenshot"));
-                        });
-                    });
+                    }
                 }
             }
         });
