@@ -1,16 +1,8 @@
-use crate::egui::UserData;
+use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText};
 use egui::epaint::TextShape;
-use egui::{emath, pos2, vec2, Align2, Color32, FontId, Id, Painter, Pos2, Rect, ScrollArea, Sense, Shape, Stroke, WidgetText};
-use image::imageops::crop;
 use crate::charter_csv::PlotPoint;
 use crate::csvqb::Value;
 use rfd::FileDialog;
-
-
-struct ScreenshotData {
-    image: egui::ColorImage,
-    pixels_per_point: f32,
-}
 
 pub type CsvGrid = Vec<Vec<String>>;
 pub fn csv2grid(content: &str) -> CsvGrid {
@@ -192,7 +184,7 @@ pub fn save_window_as_png(ctx: &egui::Context, window_id: Id) {
 }
 
 pub fn check_for_screenshot(ctx: &egui::Context) {
-        let (waiting, target_id, window_rect, scale, _) = ctx.data(|data| {
+    let (waiting, target_id, _, scale, _) = ctx.data(|data| {
         data.get_temp::<(bool, Id, Rect, f32, Pos2)>(Id::new("waiting_for_screenshot"))
             .unwrap_or((false, Id::NULL, Rect::NOTHING, 1.0, Pos2::ZERO))
     });
@@ -215,7 +207,7 @@ pub fn check_for_screenshot(ctx: &egui::Context) {
 
         ctx.input(|i| {
             for event in &i.raw.events {
-                if let egui::Event::Screenshot { image, viewport_id, user_data, .. } = event {
+                if let egui::Event::Screenshot { image, user_data, .. } = event {
                     if let Some(data) = user_data.data.as_ref() {
                         if let Some(window_id) = data.downcast_ref::<Id>() {
                             if window_id == &target_id {
@@ -227,7 +219,7 @@ pub fn check_for_screenshot(ctx: &egui::Context) {
 
                                 let mut cropped_image = egui::ColorImage::new(
                                     [width, height],
-                                    egui::Color32::TRANSPARENT
+                                    Color32::TRANSPARENT
                                 );
 
                                 let max_width = width.min(image.size[0] - x);

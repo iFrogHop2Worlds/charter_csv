@@ -1,14 +1,15 @@
 use eframe::App;
-use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin};
+use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin, Id, Rect, Pos2};
 use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot};
+use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
 pub use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use image::{ImageReader};
-use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use std::collections::HashMap;
+use std::time::Instant;
 use itertools::Itertools;
 
 pub struct CharterCsvApp {
@@ -25,7 +26,8 @@ pub struct CharterCsvApp {
     current_session: i8,
     prev_session: i8,
     show_ss_name_popup: bool,
-    edit_ss_name: String
+    edit_ss_name: String,
+    time_to_hide_state: Option<Instant>,
 }
 
 pub enum Screen {
@@ -64,6 +66,7 @@ impl Default for CharterCsvApp {
             prev_session: -2,
             show_ss_name_popup: false,
             edit_ss_name: "".to_string(),
+            time_to_hide_state: None,
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -171,7 +174,7 @@ impl App for CharterCsvApp {
 }
 impl CharterCsvApp {
     fn show_main_screen(&mut self, ctx: &Context) {
-        let frame = egui::Frame::default()
+        let frame = Frame::default()
             .fill(Color32::from_rgb(211, 211, 211));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
@@ -227,7 +230,7 @@ impl CharterCsvApp {
 
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    egui::Frame::NONE
+                    Frame::NONE
                         .fill(Color32::TRANSPARENT)
                         .stroke(egui::Stroke::NONE)
                         .inner_margin(egui::Margin {
@@ -305,7 +308,7 @@ impl CharterCsvApp {
                             }
 
                             if self.show_ss_name_popup {
-                                egui::Window::new("Enter Session Name")
+                                Window::new("Enter Session Name")
                                     .collapsible(false)
                                     .resizable(false)
                                     .show(ctx, |ui| {
@@ -348,7 +351,7 @@ impl CharterCsvApp {
                                         ui.group(|ui| {
                                             let _ = ui.group(|ui| {
                                                 ui.set_width(ui.available_width() / 1.4);
-                                                egui::Frame::default()
+                                                Frame::default()
                                                     .show(ui, |ui| {
                                                         if ui.add(Button::new("load session")).clicked() {
                                                             self.current_session = index as i8;
@@ -388,14 +391,14 @@ impl CharterCsvApp {
     }
 
     fn show_csv_list(&mut self, ctx: &Context) {
-        let frame = egui::Frame::default()
+        let frame = Frame::default()
             .fill(Color32::from_rgb(211, 211, 211));
 
         let mut files_to_remove: Option<usize> = None;
         let mut next_screen: Option<Screen> = None;
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
-            egui::Frame::NONE
+            Frame::NONE
                 .fill(Color32::from_rgb(192, 192, 192))
                 .show(ui, |ui| {
                    ui.horizontal_top(|ui| {
@@ -444,11 +447,11 @@ impl CharterCsvApp {
         content: &mut (String, CsvGrid),
         edit_index: Option<usize>
     ) -> Option<Screen> {
-        let frame = egui::Frame::default()
+        let frame = Frame::default()
             .fill(Color32::from_rgb(211, 211, 211));
         let mut next_screen = None;
         CentralPanel::default().frame(frame).show(ctx, |ui| {
-            egui::Frame::NONE
+            Frame::NONE
                 .fill(Color32::from_rgb(192, 192, 192))
                 .show(ui, |ui| {
                     ui.horizontal_top(|ui| {
@@ -541,7 +544,7 @@ impl CharterCsvApp {
     }
 
     fn create_chart_screen(&mut self, ctx: &Context) {
-        let frame = egui::Frame::default()
+        let frame = Frame::default()
             .fill(Color32::from_rgb(211, 211, 211));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
@@ -919,7 +922,7 @@ impl CharterCsvApp {
     }
 
     fn show_chart_screen(&mut self, ctx: &Context) {
-        let frame = egui::Frame::default()
+        let frame = Frame::default()
             .fill(Color32::from_rgb(211, 211, 211));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
@@ -945,7 +948,6 @@ impl CharterCsvApp {
                 for (index, graph_query) in self.graph_data.iter().enumerate() {
                     let window_id = ui.make_persistent_id(format!("chart_window_{}", index));
                     let formatted_data = Some(format_graph_query(graph_query.clone()));
-                    //println!("window_id was created!! {:?}", window_id);
                     Window::new(format!("Chart {}", index + 1))
                         .id(window_id)
                         .resizable(true)
@@ -955,8 +957,15 @@ impl CharterCsvApp {
                         .min_height(170.0)
                         .default_height(320.0)
                         .show(ui.ctx(), |ui| {
-                            if ui.button("Save as .png").clicked() {
+                            if let Some(start_time) = self.time_to_hide_state {
+                                if start_time.elapsed().as_millis() > 100 {
+                                    self.time_to_hide_state = None;
+                                }
                                 save_window_as_png(ui.ctx(), window_id);
+                            } else {
+                                if ui.button("Save as .png").clicked() {
+                                    self.time_to_hide_state = Some(Instant::now());
+                                }
                             }
                             Frame::NONE
                                 .fill(ui.style().visuals.window_fill())
@@ -989,10 +998,6 @@ impl CharterCsvApp {
                 }
             });
 
-
-            if ui.button("Export Chart").clicked() {
-                // todo Billy
-            }
         });
     }
 }
