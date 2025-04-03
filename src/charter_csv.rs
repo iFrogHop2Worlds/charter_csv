@@ -1,5 +1,5 @@
 use eframe::App;
-use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin, Id, Rect, Pos2};
+use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin, Id, Rect, Pos2, FontId};
 use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot};
 use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
@@ -219,12 +219,6 @@ impl CharterCsvApp {
                 }
             });
 
-            let total_size = ui.available_size();
-            let _ = ui.allocate_ui(Vec2::new(total_size.x, total_size.y), |ui| {
-                ui.vertical_centered(|_ui| {});
-                ui.min_rect().height()
-            }).inner;
-
             let top_margin: f32 = 25.0;
             ui.add_space(top_margin.max(0.0));
 
@@ -233,7 +227,7 @@ impl CharterCsvApp {
                     Frame::NONE
                         .fill(Color32::TRANSPARENT)
                         .stroke(egui::Stroke::NONE)
-                        .inner_margin(egui::Margin {
+                        .inner_margin(Margin {
                                 left: 60.0 as i8,
                                 right: 10.0 as i8,
                                 top: 20.0 as i8,
@@ -338,7 +332,6 @@ impl CharterCsvApp {
                     ui.add_space(60.0);
                     ui.vertical_centered(|ui| {
                         ScrollArea::vertical()
-                            .max_height(620.0)
                             .auto_shrink([false; 2])
                             .show(ui, |ui| {
                                 for (index, session) in self.sessions.iter().enumerate() {
@@ -383,9 +376,11 @@ impl CharterCsvApp {
                                         });
                                     });
                                 }
+
                             });
+
                     });
-                })
+                });
             })
         });
     }
@@ -580,11 +575,9 @@ impl CharterCsvApp {
                                         }
                                     })
                             });
-
-
                         });
 
-                        if ui.add_sized((100.0, 35.0), Button::new("reset query")).clicked() {
+                        if ui.add_sized((100.0, 35.0), Button::new("clear all")).clicked() {
                             self.csvqb_pipelines.clear();
                             self.multi_pipeline_tracker.clear();
                             self.graph_data.clear();
@@ -638,48 +631,161 @@ impl CharterCsvApp {
                             .max_height(ui.available_height())
                             .max_width(ui.available_width())
                             .show(ui, |ui| {
-                            for (index, fields) in csv_columns.iter() {
-                                let _index = index;
-                                if self.multi_pipeline_tracker.contains_key(&index) {
-                                    for (index, pipeline_index) in self.multi_pipeline_tracker.get(&index).expect("failed").iter().enumerate() {
-                                        ui.heading(RichText::new(format!("{} #{}", self.csv_files[*pipeline_index].0
-                                            .split("\\")
-                                            .last()
-                                            .unwrap_or("No file name"), index + 1))
-                                            .color(Color32::BLACK)
-                                        );
+                                let indices_and_pipelines: Vec<(usize, Vec<usize>)> = self.multi_pipeline_tracker
+                                    .iter()
+                                    .map(|(k, v)| (*k, v.clone()))
+                                    .collect();
+                                // pipelines gui
+                                for (index, fields) in csv_columns.iter() {
+                                    if let Some(pipelines) = indices_and_pipelines.iter().find(|(k, _)| k == index) {
+                                        let _index = *index;
+                                        for (index, pipeline_index) in pipelines.1.iter().enumerate() {
+                                            ui.heading(RichText::new(format!("{} #{}", self.csv_files[*pipeline_index].0
+                                                .split("\\")
+                                                .last()
+                                                .unwrap_or("No file name"), index + 1))
+                                                .color(Color32::BLACK)
+                                            );
 
-                                        ui.push_id(index, |ui| {
-                                            let mut pipeline_str = if let Some(pipelines) = self.csvqb_pipelines.get_mut(*pipeline_index) {
-                                                if let Some(pipeline) = pipelines.get(index) {
-                                                    if !pipeline.1.is_empty() {
-                                                        pipeline.1.join(" ")
+                                            ui.horizontal(|ui| {
+                                                ui.push_id(index , |ui|  {
+
+                                                    if ui.button("add pipeline").clicked() {
+                                                        if self.multi_pipeline_tracker.contains_key(&_index) {
+                                                            let _ = self.multi_pipeline_tracker.get_mut(&_index).expect("REASON").push(_index);
+
+                                                            while self.csvqb_pipelines.len() <= _index {
+                                                                self.csvqb_pipelines.push(vec![]);
+                                                            }
+                                                            self.csvqb_pipelines[_index].push((_index, vec![]));
+                                                        }
+                                                    };
+
+                                                });
+
+                                                ui.push_id(index, |ui| {
+                                                    let mut delete_requested = false;
+                                                    if ui.button("delete pipeline").clicked() {
+                                                        delete_requested = true;
+                                                    }
+
+                                                    if delete_requested {
+                                                        if let std::collections::hash_map::Entry::Occupied(mut entry) =
+                                                            self.multi_pipeline_tracker.entry(_index) {
+                                                            if let Some(pos) = entry.get_mut().iter().position(|&x| x == *pipeline_index) {
+                                                                entry.get_mut().remove(pos);
+                                                            }
+                                                            if entry.get().is_empty() {
+                                                                entry.remove();
+                                                            }
+                                                        }
+                                                        if let pipeline = self.csvqb_pipelines[*pipeline_index].remove(index) {
+                                                            println!("removed: {:?}", pipeline);
+                                                        }
+
+                                                        if index < self.graph_data.len() {
+                                                            self.graph_data.remove(index);
+                                                        }
+
+                                                    }
+                                                });
+                                                ui.add_space(112.0);
+                                                ui.push_id(_index.to_string() + &*index.to_string(), |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        egui::ComboBox::from_label("graph type")
+                                                            .selected_text(&self.chart_style_prototype)
+                                                            .show_ui(ui, |ui| {
+                                                                if ui.selectable_value(&mut self.chart_style_prototype, "Bar Graph".to_string(), "Bar Graph").clicked() {
+                                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                        if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                            pipeline.1.insert(0, "Bar Graph".to_string());
+                                                                        }
+                                                                    } else {
+                                                                        self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["Bar Graph".to_string()])]);
+                                                                    }
+                                                                }
+                                                                if ui.selectable_value(&mut self.chart_style_prototype, "Histogram".to_string(), "Histogram").clicked() {
+                                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                        if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                            pipeline.1.insert(0, "Histogram".to_string());
+                                                                        }
+                                                                    } else {
+                                                                        self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["Histogram".to_string()])]);
+                                                                    }
+                                                                }
+                                                                if ui.selectable_value(&mut self.chart_style_prototype, "Pie Chart".to_string(), "Pie Chart").clicked() {
+                                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                        if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                            pipeline.1.insert(0, "Pie Chart".to_string());
+                                                                        }
+                                                                    } else {
+                                                                        self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["Pie Chart".to_string()])]);
+                                                                    }
+                                                                }
+                                                                if ui.selectable_value(&mut self.chart_style_prototype, "Scatter Plot".to_string(), "Scatter Plot").clicked() {
+                                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                        if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                            pipeline.1.insert(0, "Scatter Plot".to_string());
+                                                                        }
+                                                                    } else {
+                                                                        self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["Scatter Plot".to_string()])]);
+                                                                    }
+                                                                }
+                                                                if ui.selectable_value(&mut self.chart_style_prototype, "Line Chart".to_string(), "Line Chart").clicked() {
+                                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                        if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                            pipeline.1.insert(0, "Line Chart".to_string());
+                                                                        }
+                                                                    } else {
+                                                                        self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["Line Chart".to_string()])]);
+                                                                    }
+                                                                }
+                                                                if ui.selectable_value(&mut self.chart_style_prototype, "Flame Graph".to_string(), "Flame Graph(coming soon)").clicked() {
+                                                                    if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *pipeline_index {
+                                                                        if let Some(pipeline) = self.csvqb_pipelines[*pipeline_index].get_mut(index) {
+                                                                            pipeline.1.insert(0, "Flame Graph".to_string());
+                                                                        }
+                                                                    } else {
+                                                                        self.csvqb_pipelines.push(vec![(*pipeline_index, vec!["Flame Graph".to_string()])]);
+                                                                    }
+                                                                }
+                                                            });
+                                                    });
+                                                });
+                                            });
+
+
+                                            ui.push_id(index, |ui| {
+                                                let mut pipeline_str = if let Some(pipelines) = self.csvqb_pipelines.get_mut(*pipeline_index) {
+                                                    if let Some(pipeline) = pipelines.get(index) {
+                                                        if !pipeline.1.is_empty() {
+                                                            pipeline.1.join(" ")
+                                                        } else {
+                                                            String::new()
+                                                        }
                                                     } else {
                                                         String::new()
                                                     }
                                                 } else {
                                                     String::new()
-                                                }
-                                            } else {
-                                                String::new()
-                                            };
+                                                };
 
-                                            if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
-                                                while self.csvqb_pipelines[*pipeline_index].len() <= index {
-                                                    self.csvqb_pipelines[*pipeline_index].push((index, Vec::new()));
-                                                }
+                                                if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
+                                                    while self.csvqb_pipelines[*pipeline_index].len() <= index {
+                                                        self.csvqb_pipelines[*pipeline_index].push((index, Vec::new()));
+                                                    }
 
-                                                self.csvqb_pipelines[*pipeline_index][index].1 = pipeline_str
-                                                    .split_whitespace()
-                                                    .map(String::from)
-                                                    .collect();
-                                            }
-                                        });
-                                        ui.push_id(index, |ui| {
-                                            ui.group(|ui| {
+                                                    self.csvqb_pipelines[*pipeline_index][index].1 = pipeline_str
+                                                        .split_whitespace()
+                                                        .map(String::from)
+                                                        .collect();
+                                                }
+                                            });
+
+                                            ui.push_id(index, |ui| {
+                                                ui.label(RichText::new("csv columns".to_string()));
                                                 ui.set_min_size(Vec2::new(ui.available_width() / 3.0, 100.0));
-                                                ScrollArea::both()
-                                                    .max_height(100.0)
+                                                ScrollArea::vertical()
                                                     .max_width(ui.available_width() / 3.0)
                                                     .show(ui, |ui| {
                                                         ui.horizontal_wrapped(|ui| {
@@ -697,13 +803,12 @@ impl CharterCsvApp {
                                                         });
                                                     });
                                             });
-                                        });
-                                        ui.push_id(index, |ui| {
-                                            ui.group(|ui| {
-                                                ui.set_min_size(Vec2::new(300.0, 33.0));
-                                                ScrollArea::both()
-                                                    .max_height(100.0)
-                                                    .max_width(300.0)
+                                            ui.add_space(-20.0);
+                                            ui.label(RichText::new("pipeline operators".to_string()));
+                                            ui.push_id(index, |ui| {
+                                                ui.set_min_size(Vec2::new(ui.available_width() / 3.0, 100.0));
+                                                ui.set_max_height(25.0);
+                                                ScrollArea::vertical()
                                                     .show(ui, |ui| {
                                                         ui.horizontal_wrapped(|ui| {
                                                             if ui.button("(").clicked() {
@@ -799,92 +904,10 @@ impl CharterCsvApp {
                                                         });
                                                     });
                                             });
-                                        });
-
-
+                                        }
+                                        ui.label("─".repeat(50));
                                     }
                                 }
-                                ui.horizontal(|ui| {
-                                    ui.group(|ui| {
-                                        ui.push_id(index, |ui| {
-                                            if ui.button("add pipeline").clicked() {
-                                                if self.multi_pipeline_tracker.contains_key(&index) {
-                                                    let _ = self.multi_pipeline_tracker.get_mut(&index).expect("REASON").push(*index);
-
-                                                    while self.csvqb_pipelines.len() <= *index {
-                                                        self.csvqb_pipelines.push(vec![]);
-                                                    }
-                                                    self.csvqb_pipelines[*index].push((*index, vec![]));
-                                                }
-                                            };
-                                            ui.horizontal(|ui| {
-                                                egui::ComboBox::from_label("graph type")
-                                                    .selected_text(&self.chart_style_prototype)
-                                                    .show_ui(ui, |ui| {
-                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Bar Graph".to_string(), "Bar Graph").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
-                                                                    pipeline.1.insert(0, "Bar Graph".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Bar Graph".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Histogram".to_string(), "Histogram").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
-                                                                    pipeline.1.insert(0, "Histogram".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Histogram".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Pie Chart".to_string(), "Pie Chart").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
-                                                                    pipeline.1.insert(0, "Pie Chart".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Pie Chart".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Scatter Plot".to_string(), "Scatter Plot").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
-                                                                    pipeline.1.insert(0, "Scatter Plot".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Scatter Plot".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Line Chart".to_string(), "Line Chart").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
-                                                                    pipeline.1.insert(0, "Line Chart".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Line Chart".to_string()])]);
-                                                            }
-                                                        }
-                                                        if ui.selectable_value(&mut self.chart_style_prototype, "Flame Graph".to_string(), "Flame Graph(coming soon)").clicked() {
-                                                            if self.csvqb_pipelines.len() > 0 && self.csvqb_pipelines.len() - 1 >= *index {
-                                                                if let Some(pipeline) = self.csvqb_pipelines[*index].get_mut(0) {
-                                                                    pipeline.1.insert(0, "Flame Graph".to_string());
-                                                                }
-                                                            } else {
-                                                                self.csvqb_pipelines.push(vec![(*index, vec!["Flame Graph".to_string()])]);
-                                                            }
-                                                        }
-                                                    });
-                                            });
-                                        });
-
-
-                                    });
-                                });
-
-                                ui.add_space(35.0);
-                            }
                                 ui.add_space(135.0);
                         });
                     });
@@ -1000,6 +1023,7 @@ impl CharterCsvApp {
 
         });
     }
+
 }
 
 
