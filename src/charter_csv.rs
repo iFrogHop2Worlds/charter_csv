@@ -1,6 +1,6 @@
 use eframe::App;
-use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin, Id, Rect, Pos2, FontId};
-use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot};
+use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin, Id, Rect, Pos2, FontId, Order};
+use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel};
 use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
@@ -28,6 +28,9 @@ pub struct CharterCsvApp {
     show_ss_name_popup: bool,
     edit_ss_name: String,
     time_to_hide_state: Option<Instant>,
+    labels: Vec<DraggableLabel>,
+    next_label_id: u32,
+    show_labels: bool,
 }
 
 pub enum Screen {
@@ -67,6 +70,9 @@ impl Default for CharterCsvApp {
             show_ss_name_popup: false,
             edit_ss_name: "".to_string(),
             time_to_hide_state: None,
+            labels: Vec::new(),
+            next_label_id: 0,
+            show_labels: true,
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -327,7 +333,8 @@ impl CharterCsvApp {
                 });
 
                 ui.vertical_centered_justified(|ui| {
-                    ui.add_space(ui.available_height() / 3.0);
+                    ui.set_height(ui.available_height() + 60.0);
+                    ui.add_space(ui.available_height() / 3.5);
                     ui.heading(RichText::new("sessions").color(Color32::BLACK));
                     ui.add_space(60.0);
                     ui.vertical_centered(|ui| {
@@ -960,6 +967,15 @@ impl CharterCsvApp {
                         if ui.add_sized((100.0, 35.0), Button::new("Explorer")).clicked() {
                             self.screen = Screen::CreateChart;
                         }
+                        if ui.button("Add Label").clicked() && self.show_labels {
+                            let new_label = DraggableLabel {
+                                text: String::new(),
+                                pos: ui.cursor().left_top(),
+                                id: self.next_label_id,
+                            };
+                            self.labels.push(new_label);
+                            self.next_label_id += 1;
+                        }
 
                         ui.add_space(ui.available_width());
                     })
@@ -971,7 +987,7 @@ impl CharterCsvApp {
                 for (index, graph_query) in self.graph_data.iter().enumerate() {
                     let window_id = ui.make_persistent_id(format!("chart_window_{}", index));
                     let formatted_data = Some(format_graph_query(graph_query.clone()));
-                    Window::new(format!("Chart {}", index + 1))
+                    Window::new("")
                         .id(window_id)
                         .resizable(true)
                         .movable(true)
@@ -994,6 +1010,33 @@ impl CharterCsvApp {
                                 .fill(ui.style().visuals.window_fill())
                                 .inner_margin(Margin::symmetric(20.0 as i8, 20.0 as i8))
                                 .show(ui, |ui| {
+                                    if index < self.labels.len() {
+                                        let label = &mut self.labels[index];
+                                        let label_id = Id::new(format!("label_{}", label.id));
+
+                                        if let Some(response) = Window::new(&label.text)
+                                            .id(label_id)
+                                            .resizable(true)
+                                            .movable(true)
+                                            .frame(Frame {
+                                                shadow: egui::Shadow::NONE,
+                                                ..Default::default()
+                                            })
+                                            .constrain(true)
+                                            .max_height(40.0)
+                                            .order(Order::Foreground)
+                                            .current_pos(label.pos)
+                                            .collapsible(true)
+                                            .show(ctx, |ui| {
+                                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                    let response = ui.text_edit_singleline(&mut label.text);
+                                                    response.changed()
+                                                });
+                                            })
+                                        {
+                                            label.pos = response.response.rect.left_top();
+                                        }
+                                    }
                                     match &graph_query[0] {
                                         Value::Field(graph_type) if graph_type == "Bar Graph" => {
                                             let _ = draw_bar_graph(ui, formatted_data);
@@ -1023,7 +1066,6 @@ impl CharterCsvApp {
 
         });
     }
-
 }
 
 

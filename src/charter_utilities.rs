@@ -4,6 +4,13 @@ use crate::charter_csv::PlotPoint;
 use crate::csvqb::Value;
 use rfd::FileDialog;
 
+#[derive(Clone, Debug)]
+pub struct DraggableLabel {
+    pub text: String,
+    pub pos: Pos2,
+    pub id: u32,
+}
+
 pub type CsvGrid = Vec<Vec<String>>;
 pub fn csv2grid(content: &str) -> CsvGrid {
     content
