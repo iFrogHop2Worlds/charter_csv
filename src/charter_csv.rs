@@ -31,6 +31,7 @@ pub struct CharterCsvApp {
     labels: Vec<DraggableLabel>,
     next_label_id: u32,
     show_labels: bool,
+    chart_view_editing: bool,
 }
 
 pub enum Screen {
@@ -73,6 +74,7 @@ impl Default for CharterCsvApp {
             labels: Vec::new(),
             next_label_id: 0,
             show_labels: true,
+            chart_view_editing: false,
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -955,8 +957,8 @@ impl CharterCsvApp {
         let frame = Frame::default()
             .fill(Color32::from_rgb(211, 211, 211));
 
+        let mut indices_to_remove: Vec<usize> = Vec::new();
         CentralPanel::default().frame(frame).show(ctx, |ui| {
-
             Frame::NONE
                 .fill(Color32::from_rgb(192, 192, 192))
                 .show(ui, |ui| {
@@ -964,17 +966,25 @@ impl CharterCsvApp {
                         if ui.add_sized((100.0, 35.0), Button::new("Home")).clicked() {
                             self.screen = Screen::Main;
                         }
+                        
                         if ui.add_sized((100.0, 35.0), Button::new("Explorer")).clicked() {
                             self.screen = Screen::CreateChart;
                         }
-                        if ui.button("Add Label").clicked() && self.show_labels {
-                            let new_label = DraggableLabel {
-                                text: String::new(),
-                                pos: ui.cursor().left_top(),
-                                id: self.next_label_id,
-                            };
-                            self.labels.push(new_label);
-                            self.next_label_id += 1;
+
+                        if ui.button(if self.chart_view_editing { "Exit Edit Mode" } else { "Edit Mode" }).clicked() {
+                            self.chart_view_editing = !self.chart_view_editing;
+                        }
+
+                        if self.chart_view_editing {
+                            if ui.button("Add Label").clicked() {
+                                let new_label = DraggableLabel {
+                                    text: String::new(),
+                                    pos: ui.cursor().left_top(),
+                                    id: self.next_label_id,
+                                };
+                                self.labels.push(new_label);
+                                self.next_label_id += 1;
+                            }
                         }
 
                         ui.add_space(ui.available_width());
@@ -989,22 +999,31 @@ impl CharterCsvApp {
                     let formatted_data = Some(format_graph_query(graph_query.clone()));
                     Window::new("")
                         .id(window_id)
+                        .collapsible(false)
                         .resizable(true)
                         .movable(true)
                         .default_size(Vec2::new(600.0, 320.0))
                         .min_width(200.0)
                         .min_height(170.0)
                         .default_height(320.0)
-                        .show(ui.ctx(), |ui| {
+                        .show(ctx, |ui| {
                             if let Some(start_time) = self.time_to_hide_state {
                                 if start_time.elapsed().as_millis() > 100 {
                                     self.time_to_hide_state = None;
                                 }
-                                save_window_as_png(ui.ctx(), window_id);
+                                save_window_as_png(ctx, window_id);
                             } else {
-                                if ui.button("Save as .png").clicked() {
-                                    self.time_to_hide_state = Some(Instant::now());
-                                }
+                                ui.horizontal(|ui| {
+                                    if ui.button("Save as .png").clicked() {
+                                        self.time_to_hide_state = Some(Instant::now());
+                                    }
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.button("❌").clicked() {
+                                            indices_to_remove.push(index);
+                                        }
+                                    });
+                                });
+
                             }
                             Frame::NONE
                                 .fill(ui.style().visuals.window_fill())
@@ -1016,22 +1035,37 @@ impl CharterCsvApp {
 
                                         if let Some(response) = Window::new(&label.text)
                                             .id(label_id)
+                                            .title_bar(false)
                                             .resizable(true)
                                             .movable(true)
-                                            .frame(Frame {
-                                                shadow: egui::Shadow::NONE,
-                                                ..Default::default()
-                                            })
                                             .constrain(true)
                                             .max_height(40.0)
                                             .order(Order::Foreground)
                                             .current_pos(label.pos)
+                                            .frame(Frame {
+                                                inner_margin: Margin::same(0.0 as i8),
+                                                outer_margin: Margin::same(0.0 as i8),
+                                                shadow: egui::Shadow::NONE,
+                                                fill: Color32::TRANSPARENT,
+                                                stroke: egui::Stroke::NONE,
+                                                corner_radius: Default::default(),
+                                            })
                                             .collapsible(true)
                                             .show(ctx, |ui| {
-                                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                                    let response = ui.text_edit_singleline(&mut label.text);
-                                                    response.changed()
-                                                });
+                                                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        let label_response = ui.label(&label.text);
+                                                        if label_response.clicked() {
+                                                            println!("maybe do something with clicks?");
+                                                        }
+                                                    });
+                                                    if self.chart_view_editing {
+                                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                            let response = ui.text_edit_singleline(&mut label.text);
+                                                            response.changed()
+                                                        });
+                                                    }
+                                                })
                                             })
                                         {
                                             label.pos = response.response.rect.left_top();
@@ -1058,13 +1092,15 @@ impl CharterCsvApp {
                                         }
                                         _ => {}
                                     }
-
                                 });
                         });
                 }
             });
-
         });
+
+        for &index in indices_to_remove.iter().rev() {
+            self.graph_data.remove(index);
+        }
     }
 }
 
