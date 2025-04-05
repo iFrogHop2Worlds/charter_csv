@@ -1,6 +1,6 @@
 use eframe::App;
 use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin, Id, Rect, Pos2, FontId, Order};
-use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel};
+use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout};
 use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
@@ -16,6 +16,7 @@ pub struct CharterCsvApp {
     texture: Option<TextureHandle>,
     screen: Screen,
     csv_files: Vec<(String, CsvGrid)>,
+    grid_layout: Option<GridLayout>,
     csvqb_pipelines: Vec<Vec<(usize, Vec<String>)>>,
     multi_pipeline_tracker: HashMap<usize, Vec<usize>>,
     graph_data: Vec<Vec<Value>>,
@@ -59,6 +60,7 @@ impl Default for CharterCsvApp {
             texture: None,
             screen: Screen::Main,
             csv_files: vec![],
+            grid_layout: None,
             csvqb_pipelines: vec![],
             multi_pipeline_tracker: HashMap::new(),
             graph_data: vec![],
@@ -445,11 +447,12 @@ impl CharterCsvApp {
         }
     }
 
-    fn show_csv_editor(
+    fn show_csv_editor (
         &mut self,
         ctx: &Context,
         content: &mut (String, CsvGrid),
-        edit_index: Option<usize>
+        edit_index: Option<usize>,
+
     ) -> Option<Screen> {
         let frame = Frame::default()
             .fill(Color32::from_rgb(211, 211, 211));
@@ -486,62 +489,20 @@ impl CharterCsvApp {
                                 row.push("".to_string());
                             }
                         }
-                        
+
                         ui.add_space(ui.available_width());
                     })
                 });
 
-            ScrollArea::both()
-                .auto_shrink([false; 2])
-                .show_viewport(ui, |ui, viewport| {
-                    let grid = &mut content.1;
-                    if grid.is_empty() {
-                        return;
-                    }
+            if self.grid_layout.is_none() {
+                let grid = &mut content.1;
+                self.grid_layout = Some(GridLayout::new(grid[0].len(), grid.len()));
+            }
 
-                    const ROW_HEIGHT: f32 = 30.0;
-                    const CELL_WIDTH: f32 = 300.0;
-
-                    let total_width = grid[0].len() as f32 * CELL_WIDTH;
-                    let total_height = grid.len() as f32 * ROW_HEIGHT;
-
-                    ui.set_min_size(Vec2::new(total_width, total_height));
-
-                    let start_row = (viewport.min.y / ROW_HEIGHT).floor().max(0.0) as usize;
-                    let visible_rows = (viewport.height() / ROW_HEIGHT).ceil() as usize + 1;
-                    let end_row = (start_row + visible_rows).min(grid.len());
-
-                    let start_col = (viewport.min.x / CELL_WIDTH).floor().max(0.0) as usize;
-                    let visible_cols = (viewport.width() / CELL_WIDTH).ceil() as usize + 1;
-                    let end_col = (start_col + visible_cols).min(grid[0].len());
-
-                    let top_offset = start_row as f32 * ROW_HEIGHT;
-                    ui.add_space(top_offset);
-
-                    for row_idx in start_row..end_row {
-                        let row = &mut grid[row_idx];
-                        ui.horizontal(|ui| {
-                            if start_col > 0 {
-                                ui.add_space(start_col as f32 * CELL_WIDTH);
-                            }
-
-                            for col_idx in start_col..end_col {
-                                if col_idx < row.len() {
-                                    let cell = &mut row[col_idx];
-                                    ui.add_sized(
-                                        Vec2::new(CELL_WIDTH, ROW_HEIGHT),
-                                        TextEdit::singleline(cell)
-                                    );
-                                }
-                            }
-                        });
-                    }
-
-                    let bottom_space = total_height - (end_row as f32 * ROW_HEIGHT);
-                    if bottom_space > 0.0 {
-                        ui.add_space(bottom_space);
-                    }
-                });
+            if let Some(grid_layout) = &mut self.grid_layout {
+                let grid = &mut content.1;
+                grid_layout.show(ui, grid);
+            }
         });
 
         next_screen

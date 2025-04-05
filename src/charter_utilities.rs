@@ -1,4 +1,4 @@
-use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText};
+use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText, ScrollArea, Vec2, TextEdit, Response, Sense, CursorIcon};
 use egui::epaint::TextShape;
 use crate::charter_csv::PlotPoint;
 use crate::csvqb::Value;
@@ -12,6 +12,7 @@ pub struct DraggableLabel {
 }
 
 pub type CsvGrid = Vec<Vec<String>>;
+
 pub fn csv2grid(content: &str) -> CsvGrid {
     content
         .lines()
@@ -277,4 +278,169 @@ pub fn check_for_screenshot(ctx: &egui::Context) {
     }
 }
 
+// grid layouts csv editor
+pub struct GridLayout {
+    col_widths: Vec<f32>,
+    row_heights: Vec<f32>,
+    dragging: Option<(usize, bool)>,
+    min_size: f32,
+    max_size: f32,
+}
+
+impl GridLayout {
+    pub(crate) fn new(cols: usize, rows: usize) -> Self {
+        Self {
+            col_widths: vec![100.0; cols],
+            row_heights: vec![20.0; rows],
+            dragging: None,
+            min_size: 20.0,
+            max_size: 300.0,
+        }
+    }
+
+    pub(crate) fn show(&mut self, ui: &mut egui::Ui, grid: &mut Vec<Vec<String>>) {
+        ScrollArea::both()
+            .auto_shrink([false; 2])
+            .show_viewport(ui, |ui, viewport| {
+                if grid.is_empty() { return; }
+
+                let total_width: f32 = self.col_widths.iter().take(grid[0].len()).sum();
+                let total_height: f32 = self.row_heights.iter().take(grid.len()).sum();
+                ui.set_min_size(Vec2::new(total_width, total_height));
+
+                let mut accumulated_height = 0.0;
+                let start_row = {
+                    let mut idx = 0;
+                    while idx < grid.len() && accumulated_height < viewport.min.y {
+                        accumulated_height += self.row_heights[idx];
+                        idx += 1;
+                    }
+                    idx.saturating_sub(1)
+                };
+
+                let mut height_in_view = 0.0;
+                let mut visible_rows = 0;
+                let mut row_idx = start_row;
+                while row_idx < grid.len() && height_in_view < viewport.height() + self.row_heights[row_idx] {
+                    height_in_view += self.row_heights[row_idx];
+                    visible_rows += 1;
+                    row_idx += 1;
+                }
+
+                let start_col = (viewport.min.x / self.col_widths[0]).floor().max(0.0) as usize;
+                let visible_cols = (viewport.width() / self.col_widths[0]).ceil() as usize + 1;
+
+                let end_row = (start_row + visible_rows).min(grid.len());
+                let end_col = (start_col + visible_cols).min(grid[0].len());
+
+                let top_offset = self.row_heights.iter().take(start_row).sum::<f32>();
+                ui.add_space(top_offset);
+
+                for row_idx in start_row..end_row {
+                    ui.horizontal(|ui| {
+                        let left_offset = self.col_widths.iter().take(start_col).sum::<f32>();
+                        ui.add_space(left_offset);
+
+                        let mut current_x = left_offset;
+
+                        for col_idx in start_col..end_col {
+                            let cell = &mut grid[row_idx][col_idx];
+
+                            let desired_rect = Rect::from_min_size(
+                                ui.min_rect().min + Vec2::new(current_x, 0.0),
+                                Vec2::new(self.col_widths[col_idx], self.row_heights[row_idx])
+                            );
+
+                            ui.put(
+                                desired_rect,
+                                TextEdit::singleline(cell)
+                            );
+
+                            if col_idx < end_col - 1 {
+                                let resizer_width = 6.0;
+                                let resizer_rect = Rect::from_min_size(
+                                    desired_rect.min + Vec2::new(self.col_widths[col_idx] - resizer_width/2.0, 0.0),
+                                    Vec2::new(resizer_width, self.row_heights[row_idx])
+                                );
+
+                                let painter = ui.painter_at(resizer_rect);
+
+                                let response = ui.allocate_rect(resizer_rect, Sense::drag());
+                                if response.hovered() {
+                                    painter.rect_filled(
+                                        resizer_rect,
+                                        0.0,
+                                        Color32::from_gray(180),
+                                    );
+                                    ui.output_mut(|o| o.cursor_icon = CursorIcon::ResizeHorizontal);
+                                }
+
+                                if response.dragged() {
+                                    self.dragging = Some((col_idx, true));
+                                }
+                            }
+
+                            current_x += self.col_widths[col_idx];
+                        }
+                    });
+                }
+
+                // // bottom spacing
+                // let bottom_space = total_height - (self.row_heights.iter().take(end_row).sum::<f32>());
+                // if bottom_space > 0.0 {
+                //     ui.add_space(bottom_space);
+                // }
+
+                if let Some((idx, is_vertical)) = self.dragging {
+                    if !ui.input(|i| i.pointer.primary_down()) {
+                        self.dragging = None;
+                    } else {
+                        let delta = ui.input(|i| i.pointer.delta());
+                        if is_vertical {
+                            self.adjust_column_width(idx, delta.x);
+                        }
+                    }
+                }
+            });
+    }
+
+    // fn draw_separator(&self, ui: &mut egui::Ui, rect: Rect) -> Response {
+    //     let response = ui.allocate_rect(rect, Sense::click_and_drag());
+    //
+    //     let painter = ui.painter().clone().with_layer_id(
+    //         egui::LayerId::new(egui::Order::Foreground, Id::new("separator"))
+    //     );
+    //
+    //     if response.hovered() {
+    //         painter.rect_filled(
+    //             rect,
+    //             0.0,
+    //             Color32::from_gray(200),
+    //         );
+    //     } else {
+    //         painter.rect_filled(
+    //             rect,
+    //             0.0,
+    //             Color32::from_gray(180),
+    //         );
+    //     }
+    //     response
+    // }
+
+    fn handle_separator_interaction(&mut self, response: Response, idx: usize, is_vertical: bool) {
+        if response.drag_started() {
+            self.dragging = Some((idx, is_vertical));
+        }
+    }
+
+    fn adjust_column_width(&mut self, idx: usize, delta: f32) {
+        if idx >= self.col_widths.len() { return; }
+        self.col_widths[idx] = (self.col_widths[idx] + delta).max(10.0);
+    }
+
+    fn adjust_row_height(&mut self, idx: usize, delta: f32) {
+        if idx >= self.row_heights.len() { return; }
+        self.row_heights[idx] = (self.row_heights[idx] + delta).max(10.0);
+    }
+}
 
