@@ -291,7 +291,7 @@ impl GridLayout {
     pub(crate) fn new(cols: usize, rows: usize) -> Self {
         Self {
             col_widths: vec![100.0; cols],
-            row_heights: vec![20.0; rows],
+            row_heights: vec![16.0; rows],
             dragging: None,
             min_size: 20.0,
             max_size: 300.0,
@@ -311,7 +311,7 @@ impl GridLayout {
                 let mut accumulated_height = 0.0;
                 let start_row = {
                     let mut idx = 0;
-                    while idx < grid.len() && accumulated_height < viewport.min.y {
+                    while idx < grid.len() && accumulated_height <= viewport.min.y {
                         accumulated_height += self.row_heights[idx];
                         idx += 1;
                     }
@@ -329,67 +329,73 @@ impl GridLayout {
 
                 let start_col = (viewport.min.x / self.col_widths[0]).floor().max(0.0) as usize;
                 let visible_cols = (viewport.width() / self.col_widths[0]).ceil() as usize + 1;
-
                 let end_row = (start_row + visible_rows).min(grid.len());
                 let end_col = (start_col + visible_cols).min(grid[0].len());
 
                 let top_offset = self.row_heights.iter().take(start_row).sum::<f32>();
                 ui.add_space(top_offset);
 
+                ui.spacing_mut().item_spacing.y = -3.0;
+                ui.spacing_mut().item_spacing.x = -3.0;
                 for row_idx in start_row..end_row {
                     ui.horizontal(|ui| {
                         let left_offset = self.col_widths.iter().take(start_col).sum::<f32>();
-                        ui.add_space(left_offset);
-
-                        let mut current_x = left_offset;
+                        if start_col > 0 {
+                            ui.add_space(left_offset);
+                        }
 
                         for col_idx in start_col..end_col {
                             let cell = &mut grid[row_idx][col_idx];
 
-                            let desired_rect = Rect::from_min_size(
-                                ui.min_rect().min + Vec2::new(current_x, 0.0),
-                                Vec2::new(self.col_widths[col_idx], self.row_heights[row_idx])
-                            );
-
-                            ui.put(
-                                desired_rect,
+                            let response = ui.add_sized(
+                                Vec2::new(self.col_widths[col_idx], self.row_heights[row_idx]),
                                 TextEdit::singleline(cell)
                             );
 
-                            if col_idx < end_col - 1 {
+                            if col_idx < end_col {
                                 let resizer_width = 6.0;
                                 let resizer_rect = Rect::from_min_size(
-                                    desired_rect.min + Vec2::new(self.col_widths[col_idx] - resizer_width/2.0, 0.0),
+                                    response.rect.right_top() + Vec2::new(-resizer_width/2.0, 0.0),
                                     Vec2::new(resizer_width, self.row_heights[row_idx])
                                 );
 
                                 let painter = ui.painter_at(resizer_rect);
-
                                 let response = ui.allocate_rect(resizer_rect, Sense::drag());
                                 if response.hovered() {
-                                    painter.rect_filled(
-                                        resizer_rect,
-                                        0.0,
-                                        Color32::from_gray(180),
-                                    );
+                                    painter.rect_filled(resizer_rect, 0.0, Color32::from_gray(180));
                                     ui.output_mut(|o| o.cursor_icon = CursorIcon::ResizeHorizontal);
                                 }
-
                                 if response.dragged() {
                                     self.dragging = Some((col_idx, true));
                                 }
                             }
+                        }
 
-                            current_x += self.col_widths[col_idx];
+                        if row_idx < end_row - 1 {
+                            let resizer_height = 6.0;
+                            let row_width = self.col_widths.iter().skip(start_col).take(end_col - start_col).sum::<f32>();
+                            let resizer_rect = Rect::from_min_size(
+                                ui.min_rect().min + Vec2::new(left_offset, self.row_heights[row_idx] - resizer_height/2.0),
+                                Vec2::new(row_width, resizer_height)
+                            );
+
+                            let painter = ui.painter_at(resizer_rect);
+                            let response = ui.allocate_rect(resizer_rect, Sense::drag());
+                            if response.hovered() {
+                                painter.rect_filled(resizer_rect, 0.0, Color32::from_gray(180));
+                                ui.output_mut(|o| o.cursor_icon = CursorIcon::ResizeVertical);
+                            }
+                            if response.dragged() {
+                                self.dragging = Some((row_idx, false));
+                            }
                         }
                     });
                 }
 
-                // // bottom spacing
-                // let bottom_space = total_height - (self.row_heights.iter().take(end_row).sum::<f32>());
-                // if bottom_space > 0.0 {
-                //     ui.add_space(bottom_space);
-                // }
+                let bottom_space = total_height - self.row_heights.iter().take(end_row).sum::<f32>();
+                if bottom_space > 0.0 {
+                    ui.add_space(bottom_space);
+                }
 
                 if let Some((idx, is_vertical)) = self.dragging {
                     if !ui.input(|i| i.pointer.primary_down()) {
@@ -398,39 +404,12 @@ impl GridLayout {
                         let delta = ui.input(|i| i.pointer.delta());
                         if is_vertical {
                             self.adjust_column_width(idx, delta.x);
+                        } else {
+                            self.adjust_row_height(idx, delta.y);
                         }
                     }
                 }
             });
-    }
-
-    // fn draw_separator(&self, ui: &mut egui::Ui, rect: Rect) -> Response {
-    //     let response = ui.allocate_rect(rect, Sense::click_and_drag());
-    //
-    //     let painter = ui.painter().clone().with_layer_id(
-    //         egui::LayerId::new(egui::Order::Foreground, Id::new("separator"))
-    //     );
-    //
-    //     if response.hovered() {
-    //         painter.rect_filled(
-    //             rect,
-    //             0.0,
-    //             Color32::from_gray(200),
-    //         );
-    //     } else {
-    //         painter.rect_filled(
-    //             rect,
-    //             0.0,
-    //             Color32::from_gray(180),
-    //         );
-    //     }
-    //     response
-    // }
-
-    fn handle_separator_interaction(&mut self, response: Response, idx: usize, is_vertical: bool) {
-        if response.drag_started() {
-            self.dragging = Some((idx, is_vertical));
-        }
     }
 
     fn adjust_column_width(&mut self, idx: usize, delta: f32) {
@@ -441,6 +420,21 @@ impl GridLayout {
     fn adjust_row_height(&mut self, idx: usize, delta: f32) {
         if idx >= self.row_heights.len() { return; }
         self.row_heights[idx] = (self.row_heights[idx] + delta).max(10.0);
+    }
+
+    pub fn add_column(&mut self, grid: &mut Vec<Vec<String>>) {
+        for row in grid.iter_mut() {
+            row.push(String::new());
+        }
+        self.col_widths.push(100.0);
+    }
+
+    pub fn add_row(&mut self, grid: &mut Vec<Vec<String>>) {
+        if let Some(first_row) = grid.first() {
+            let new_row = vec![String::new(); first_row.len()];
+            grid.push(new_row);
+            self.row_heights.push(20.0);
+        }
     }
 }
 

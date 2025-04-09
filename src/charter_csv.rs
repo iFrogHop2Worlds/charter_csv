@@ -481,13 +481,11 @@ impl CharterCsvApp {
                         }
 
                         if ui.add_sized((100.0, 35.0), Button::new("Add Row")).clicked() {
-                            content.1.push(vec!["".to_string(); content.1.get(0).map_or(0, |row| row.len())]);
+                            self.grid_layout.as_mut().expect("no grid layout found").add_row(&mut content.1);
                         }
 
                         if ui.add_sized((100.0, 35.0), Button::new("Add Column")).clicked() {
-                            for row in &mut content.1 {
-                                row.push("".to_string());
-                            }
+                            self.grid_layout.as_mut().expect("no grid layout found").add_column(&mut content.1);
                         }
 
                         ui.add_space(ui.available_width());
