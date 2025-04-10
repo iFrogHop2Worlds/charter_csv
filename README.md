@@ -23,10 +23,6 @@ This will later get abstracted into a crate.
 **todo - add csvqb examples + quickstart guide**
 
 # Future road map
-The core features of this project will remain free forever, and I strive to offer a free product that 
-outperforms it's competitors and is easier to use. In future releases more complex features will be introduced
-that will require paid plans. 
-
 Future versions will have:
 - Ai assistant to construct pipelines.
 - Device sync.
@@ -37,7 +33,6 @@ Future versions will have:
 - Teams/Organization support.
 - Refactored codebase and continuous updates including performance optimizations.
 
-feel free to fork or make a pr if you think you have a meaningful contribution. Or just want to
-play with the code..
+please feel free to fork, make pr's and raise issues.
 
 **todo - add contribution guide** 
