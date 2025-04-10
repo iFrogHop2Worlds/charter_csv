@@ -185,7 +185,7 @@ impl App for CharterCsvApp {
 impl CharterCsvApp {
     fn show_main_screen(&mut self, ctx: &Context) {
         let frame = Frame::default()
-            .fill(Color32::from_rgb(211, 211, 211));
+            .fill(Color32::from_rgb(193, 200, 208));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             let texture: &mut TextureHandle = self.texture.get_or_insert_with(|| {
@@ -250,7 +250,7 @@ impl CharterCsvApp {
                             );
                             ui.add_space(75.0);
                             ui.heading(RichText::new("Charter CSV").color(Color32::BLACK));
-                            ui.label(RichText::new("Visualize your data with speed and precision easily").color(Color32::BLACK));
+                            ui.label(RichText::new("Visualize your data with speed and precision.").color(Color32::BLACK));
                             ui.add_space(20.0);
 
                             let menu_btn_size = Vec2::new(300.0, 30.0);
@@ -267,11 +267,7 @@ impl CharterCsvApp {
                                 }
                             }
 
-                            if ui.add_sized(menu_btn_size, Button::new("View Files")).clicked() {
-                                self.screen = Screen::ViewCsv;
-                            }
-
-                            if ui.add_sized(menu_btn_size, Button::new("Create CSV File")).clicked() {
+                            if ui.add_sized(menu_btn_size, Button::new("New File")).clicked() {
                                 self.screen = Screen::CreateCsv {
                                     content: (
                                         "/todo/set path".to_string(),
@@ -280,11 +276,15 @@ impl CharterCsvApp {
                                 };
                             }
 
-                            if ui.add_sized(menu_btn_size, Button::new("Query Builder")).clicked() {
+                            if ui.add_sized(menu_btn_size, Button::new("View Files")).clicked() {
+                                self.screen = Screen::ViewCsv;
+                            }
+
+                            if ui.add_sized(menu_btn_size, Button::new("Data Explorer")).clicked() {
                                 self.screen = Screen::CreateChart;
                             }
 
-                            if ui.add_sized(menu_btn_size, Button::new("View Charts")).clicked() {
+                            if ui.add_sized(menu_btn_size, Button::new("Charts")).clicked() {
                                 self.screen = Screen::ViewChart;
                             }
 
@@ -339,49 +339,66 @@ impl CharterCsvApp {
                 ui.vertical_centered_justified(|ui| {
                     ui.set_height(ui.available_height() + 60.0);
                     ui.add_space(ui.available_height() / 3.5);
-                    ui.heading(RichText::new("sessions").color(Color32::BLACK));
-                    ui.add_space(60.0);
+                    if !self.sessions.is_empty() {
+                        ui.heading(RichText::new("sessions").color(Color32::BLACK));
+                    } else {
+                        ui.heading(RichText::new("start a new session!").color(Color32::BLACK));
+                    }
+
+                    ui.add_space(30.0);
                     ui.vertical_centered(|ui| {
                         ScrollArea::vertical()
                             .auto_shrink([false; 2])
                             .show(ui, |ui| {
                                 for (index, session) in self.sessions.iter().enumerate() {
-                                    let name_color = if self.current_session == index as i8 {
-                                        Color32::from_rgb(34, 139, 34)
-                                    } else {
-                                        Color32::BLACK
+                                    let active_session = if self.current_session == index as i8 {
+                                        Color32::from_rgb(0, 196, 218)
+                                    } else { 
+                                        Color32::TRANSPARENT
                                     };
                                     ui.push_id(index, |ui| {
                                         ui.group(|ui| {
                                             let _ = ui.group(|ui| {
-                                                ui.set_width(ui.available_width() / 1.4);
+                                                ui.set_width(ui.available_width() / 1.8);
+                                                ui.set_height(30.0);
                                                 Frame::default()
+                                                    .fill(active_session)
+                                                    .outer_margin(0.0)
+                                                    .inner_margin(5.0)
                                                     .show(ui, |ui| {
-                                                        if ui.add(Button::new("load session")).clicked() {
-                                                            self.current_session = index as i8;
-                                                            self.multi_pipeline_tracker.clear();
-                                                            self.csv_files.clear();
-                                                            self.csvqb_pipelines.clear();
-                                                            self.graph_data.clear();
+                                                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                                                            ui.add_space(3.0);
+                                                            ui.label(RichText::new(format!("name: {}", session.name)).color(Color32::BLACK));
+                                                            ui.label(RichText::new(format!("files: {:?}", session.files.len())).color(Color32::BLACK));
+                                                            ui.label(RichText::new(format!("pipelines: {:?}", session.pipelines.len())).color(Color32::BLACK));
 
-                                                            let receiver = reconstruct_session(self.sessions[index].clone());
-                                                            while let Ok((file_path, grid)) = receiver.recv() {
-                                                                self.csv_files.push((file_path, grid));
+                                                            if self.current_session != index as i8 {
+                                                                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                                    if ui.add_sized(
+                                                                        Vec2::new(180.0, 20.0),
+                                                                        Button::new("load session")
+                                                                            .corner_radius(12.0)
+                                                                    ).clicked() {
+                                                                        self.current_session = index as i8;
+                                                                        self.multi_pipeline_tracker.clear();
+                                                                        self.csv_files.clear();
+                                                                        self.csvqb_pipelines.clear();
+                                                                        self.graph_data.clear();
+                                                                        let receiver = reconstruct_session(self.sessions[index].clone());
+                                                                        while let Ok((file_path, grid)) = receiver.recv() {
+                                                                            self.csv_files.push((file_path, grid));
+                                                                        }
+                                                                        for (_index, pipeline) in self.sessions[index].pipelines.iter().enumerate() {
+                                                                            if pipeline.is_empty() {
+                                                                                println!("Warning: Empty pipeline found, skipping...");
+                                                                                continue;
+                                                                            }
+                                                                            self.csvqb_pipelines.push(vec![(_index, pipeline.to_owned())]);
+                                                                        }
+                                                                    }
+                                                                });
                                                             }
-
-                                                            for (_index, pipeline) in self.sessions[index].pipelines.iter().enumerate() {
-                                                                if pipeline.is_empty() {
-                                                                    println!("Warning: Empty pipeline found, skipping...");
-                                                                    continue;
-                                                                }
-
-                                                                self.csvqb_pipelines.push(vec![(_index, pipeline.to_owned())]);
-                                                            }
-                                                        }
-                                                        ui.label(RichText::new(format!("session name: {}", session.name)).color(name_color));
-                                                        ui.label(RichText::new(format!("session data: {:?}", session.files)).color(Color32::BLACK));
-                                                        ui.label(RichText::new(format!("session pipelines: {:?}", session.pipelines)).color(Color32::BLACK));
-                                                        ui.add_space(12.0);
+                                                        });
                                                     });
                                             });
                                         });
@@ -398,7 +415,7 @@ impl CharterCsvApp {
 
     fn show_csv_list(&mut self, ctx: &Context) {
         let frame = Frame::default()
-            .fill(Color32::from_rgb(211, 211, 211));
+            .fill(Color32::from_rgb(193, 200, 208));
 
         let mut files_to_remove: Option<usize> = None;
         let mut next_screen: Option<Screen> = None;
@@ -411,31 +428,55 @@ impl CharterCsvApp {
                        if ui.add_sized((100.0, 35.0), Button::new("Home")).clicked() {
                            next_screen = Some(Screen::Main);
                        }
+
+                       if ui.add_sized((100.0, 35.0), Button::new("Load File")).clicked()  {
+                           if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
+                               let path_as_string = path.to_str().unwrap().to_string();
+                               let sender = self.file_sender.clone();
+                               thread::spawn(move || {
+                                   if let Ok(content) = std::fs::read_to_string(&path) {
+                                       let grid: CsvGrid = csv2grid(&content);
+                                       let _ = sender.send((path_as_string, grid));
+                                   }
+                               });
+                           }
+                       }
                        ui.add_space(ui.available_width());
                    })
                 });
 
             ui.add_space(21.0);
-            for (index, file) in self.csv_files.iter().enumerate() {
-                let file_name = file.0.split("\\").last().unwrap_or("No file name");
-                ui.push_id(index, |ui| {
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.set_min_size(Vec2::new(ui.available_width(), 0.0));
-                            ui.label(file_name);
-                            if ui.button("edit").clicked() {
-                                next_screen = Some(Screen::EditCsv {
-                                    index,
-                                    content: file.clone(),
+
+            let desired_width = ui.available_width() / 3.0;
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                for (index, file) in self.csv_files.iter().enumerate() {
+                    let file_name = file.0.split("\\").last().unwrap_or("No file name");
+                    ui.push_id(index, |ui| {
+                        let total_width = ui.available_width();
+                        let padding = (total_width - desired_width) / 2.0;
+                        ui.allocate_space(Vec2::new(padding, 0.0));
+
+                        ui.group(|ui| {
+                            ui.set_max_width(desired_width);
+                            ui.horizontal(|ui| {
+                                ui.label(file_name);
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.button("delete").clicked() {
+                                        files_to_remove = Some(index);
+                                    }
+                                    if ui.button("edit").clicked() {
+                                        next_screen = Some(Screen::EditCsv {
+                                            index,
+                                            content: file.clone(),
+                                        });
+                                    }
                                 });
-                            }
-                            if ui.button("delete").clicked() {
-                                files_to_remove = Some(index);
-                            }
-                        })
+                            });
+                        });
                     });
-                });
-            }
+                }
+            });
+            
 
         });
 
@@ -455,7 +496,7 @@ impl CharterCsvApp {
 
     ) -> Option<Screen> {
         let frame = Frame::default()
-            .fill(Color32::from_rgb(211, 211, 211));
+            .fill(Color32::from_rgb(193, 200, 208));
         let mut next_screen = None;
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             Frame::NONE
@@ -508,7 +549,7 @@ impl CharterCsvApp {
 
     fn create_chart_screen(&mut self, ctx: &Context) {
         let frame = Frame::default()
-            .fill(Color32::from_rgb(211, 211, 211));
+            .fill(Color32::from_rgb(193, 200, 208));
 
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             Frame::NONE
@@ -914,7 +955,7 @@ impl CharterCsvApp {
 
     fn show_chart_screen(&mut self, ctx: &Context) {
         let frame = Frame::default()
-            .fill(Color32::from_rgb(211, 211, 211));
+            .fill(Color32::from_rgb(193, 200, 208));
 
         let mut indices_to_remove: Vec<usize> = Vec::new();
         CentralPanel::default().frame(frame).show(ctx, |ui| {
@@ -930,12 +971,12 @@ impl CharterCsvApp {
                             self.screen = Screen::CreateChart;
                         }
 
-                        if ui.button(if self.chart_view_editing { "Exit Edit Mode" } else { "Edit Mode" }).clicked() {
+                        if ui.add_sized((100.0, 35.0), Button::new("Edit Mode")).clicked() {
                             self.chart_view_editing = !self.chart_view_editing;
                         }
 
                         if self.chart_view_editing {
-                            if ui.button("Add Label").clicked() {
+                            if ui.add_sized((100.0, 35.0), Button::new("Add Label")).clicked() {
                                 let new_label = DraggableLabel {
                                     text: String::new(),
                                     pos: ui.cursor().left_top(),

@@ -1,4 +1,4 @@
-use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText, ScrollArea, Vec2, TextEdit, Response, Sense, CursorIcon};
+use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText, ScrollArea, Vec2, TextEdit, Response, Sense, CursorIcon, StrokeKind};
 use egui::epaint::TextShape;
 use crate::charter_csv::PlotPoint;
 use crate::csvqb::Value;
@@ -291,10 +291,10 @@ impl GridLayout {
     pub(crate) fn new(cols: usize, rows: usize) -> Self {
         Self {
             col_widths: vec![100.0; cols],
-            row_heights: vec![16.0; rows],
+            row_heights: vec![30.0; rows],
             dragging: None,
             min_size: 20.0,
-            max_size: 300.0,
+            max_size: 150.0,
         }
     }
 
@@ -347,10 +347,27 @@ impl GridLayout {
                         for col_idx in start_col..end_col {
                             let cell = &mut grid[row_idx][col_idx];
 
+
+                            //Todo (Billy) Using multiline throws off spacing calculations for cells in the grid using sinlgline for now for predictable calculations..
+
+                            // let frame = egui::Frame::NONE
+                            //     .fill(Color32::WHITE);
+                            // let response = frame.show(ui, |ui| {
+                            //     ScrollArea::vertical()
+                            //         .show(ui, |ui| {
+                            //             ui.add(
+                            //                 TextEdit::multiline(cell)
+                            //                     .min_size(vec2(self.col_widths[col_idx], self.row_heights[row_idx]))
+                            //             )
+                            //         })
+                            //         .inner
+                            // }).response;
+
                             let response = ui.add_sized(
                                 Vec2::new(self.col_widths[col_idx], self.row_heights[row_idx]),
-                                TextEdit::singleline(cell)
+                                TextEdit::singleline(cell),
                             );
+                             ui.painter().rect_stroke(response.rect, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Outside);
 
                             if col_idx < end_col {
                                 let resizer_width = 6.0;

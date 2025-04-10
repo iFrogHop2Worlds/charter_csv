@@ -11,8 +11,8 @@ use charter_csv::CharterCsvApp;
 fn main() {
     let ctx = Context::default();
     let mut size = ctx.used_size();
-    size.x = f32::INFINITY;
-    size.y = f32::INFINITY;
+    size.x = 1280.0;
+    size.y = 720.0;
     let options = eframe::NativeOptions {
         viewport: ViewportBuilder::default()
             .with_resizable(true)
