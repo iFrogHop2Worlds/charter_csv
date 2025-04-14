@@ -1,6 +1,6 @@
 use eframe::App;
 use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin, Id, Rect, Pos2, FontId, Order};
-use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout};
+use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout, grid_search};
 use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
@@ -33,6 +33,7 @@ pub struct CharterCsvApp {
     next_label_id: u32,
     show_labels: bool,
     chart_view_editing: bool,
+    search_text: String
 }
 
 pub enum Screen {
@@ -77,6 +78,7 @@ impl Default for CharterCsvApp {
             next_label_id: 0,
             show_labels: true,
             chart_view_editing: false,
+            search_text: "".to_string(),
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -527,6 +529,19 @@ impl CharterCsvApp {
 
                         if ui.add_sized((100.0, 35.0), Button::new("Add Column")).clicked() {
                             self.grid_layout.as_mut().expect("no grid layout found").add_column(&mut content.1);
+                        }
+
+                        ui.add_sized((200.0, 35.0), TextEdit::singleline(&mut self.search_text));
+                        if ui.add_sized((100.0, 35.0), Button::new("Search")).clicked() {
+                            if let Some(grid_layout) = self.grid_layout.as_mut() {
+                                let res = grid_search(&content.1, &self.search_text);
+                                if let Some(res) = res {
+                                    grid_layout.goto_grid_pos(ui, res.row, res.col, res.scroll_x, res.scroll_y);
+                                    println!("searching... {:?}", res);
+                                }
+
+                            }
+
                         }
 
                         ui.add_space(ui.available_width());

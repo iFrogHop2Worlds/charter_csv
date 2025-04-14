@@ -59,7 +59,6 @@ pub fn draw_rotated_text(
 
     let pos = pos2(x + bar_width / 2.0, y_position);
 
-    // Convert degrees to radians
     let rotation_angle = (rotation_degrees.clamp(0.0, 360.0) * std::f32::consts::PI) / 180.0;
     let rot = emath::Rot2::from_angle(rotation_angle);
 
@@ -108,7 +107,7 @@ pub fn load_icon() -> egui::IconData {
 
 pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
     if graph_data.is_empty() {
-        return Vec::new(); // Return empty vector if input is empty
+        return Vec::new(); 
     }
 
     let mut plot_data: Vec<PlotPoint> = Vec::new();
@@ -278,13 +277,103 @@ pub fn check_for_screenshot(ctx: &egui::Context) {
     }
 }
 
+#[derive(Debug)]
+pub struct SearchResult {
+    pub row: usize,
+    pub col: usize,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
+}
+pub fn grid_search(grid: &CsvGrid, search_string: &str) -> Option<SearchResult> {
+    if search_string.is_empty() {
+        println!("Search string is empty");
+        return None;
+    }
+
+    for (row_idx, row) in grid.iter().enumerate() {
+        for (col_idx, cell) in row.iter().enumerate() {
+            if cell.to_lowercase().contains(&search_string.to_lowercase()) {
+                const CELL_WIDTH: f32 = 100.0;
+                const CELL_HEIGHT: f32 = 30.0;
+
+                let result = SearchResult {
+                    row: row_idx,
+                    col: col_idx,
+                    scroll_x: col_idx as f32 * CELL_WIDTH,
+                    scroll_y: (row_idx as f32 * CELL_HEIGHT) + 38.0,
+                };
+
+                println!("Found first match at row {}, column {}", row_idx, col_idx);
+                println!("Scroll coordinates: x={}, y={}", result.scroll_x, result.scroll_y);
+
+                additional_search(grid, search_string, row_idx, col_idx);
+
+                return Some(result);
+
+            }
+        }
+    }
+
+    println!("No results found for '{}'", search_string);
+    None
+}
+
+fn additional_search(grid: &CsvGrid, search_string: &str, first_row: usize, first_col: usize) -> Vec<SearchResult> {
+    let mut additional_matches = Vec::new();
+    let mut found_count = 0;
+    let mut current_row = first_row;
+    let mut current_col = first_col + 1;
+
+    while current_row < grid.len() {
+        while current_col < grid[current_row].len() {
+            if grid[current_row][current_col]
+                .to_lowercase()
+                .contains(&search_string.to_lowercase())
+            {
+                const CELL_WIDTH: f32 = 100.0;
+                const CELL_HEIGHT: f32 = 30.0;
+
+                let result = SearchResult {
+                    row: current_row,
+                    col: current_col,
+                    scroll_x: current_col as f32 * CELL_WIDTH,
+                    scroll_y: current_row as f32 * CELL_HEIGHT,
+                };
+
+                found_count += 1;
+                println!(
+                    "Found additional match #{} at row {}, column {}",
+                    found_count + 1, current_row, current_col
+                );
+                println!("Scroll coordinates: x={}, y={}", result.scroll_x, result.scroll_y);
+
+                additional_matches.push(result);
+            }
+            current_col += 1;
+        }
+        current_row += 1;
+        current_col = 0;
+    }
+
+    if additional_matches.is_empty() {
+        println!("No additional matches found");
+    } else {
+        println!("Found {} additional matches", additional_matches.len());
+    }
+
+    additional_matches
+}
+
 // grid layouts csv editor
+#[derive(Debug)]
 pub struct GridLayout {
     col_widths: Vec<f32>,
     row_heights: Vec<f32>,
     dragging: Option<(usize, bool)>,
     min_size: f32,
     max_size: f32,
+    highlight_pos: Option<(usize, usize)>,
+    highlight_start: Option<f64>,
 }
 
 impl GridLayout {
@@ -295,7 +384,22 @@ impl GridLayout {
             dragging: None,
             min_size: 20.0,
             max_size: 150.0,
+            highlight_pos: None,
+            highlight_start: None,
         }
+    }
+
+    pub fn goto_grid_pos(&mut self, ui: &mut egui::Ui, row: usize, column: usize, scroll_x: f32, scroll_y: f32) {
+        self.highlight_pos = Some((row, column));
+        self.highlight_start = Some(ui.input(|i| i.time));
+
+        ui.scroll_to_rect(
+            Rect::from_min_size(
+                Pos2::new(scroll_x, scroll_y),
+                Vec2::new(self.col_widths[column], self.row_heights[row])
+            ),
+            None
+        );
     }
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui, grid: &mut Vec<Vec<String>>) {
@@ -424,6 +528,33 @@ impl GridLayout {
                         } else {
                             self.adjust_row_height(idx, delta.y);
                         }
+                    }
+                }
+
+                if let (Some((row, col)), Some(start_time)) = (self.highlight_pos, self.highlight_start) {
+                    let current_time = ui.input(|i| i.time);
+                    let elapsed = current_time - start_time;
+                    let cell_width = self.col_widths[col];
+                    let cell_height = self.row_heights[row];
+                    let y_balance = row as f32 * 1.0;
+
+                    if elapsed < 1.0 {
+                        let cell_rect = Rect::from_min_size(
+                            Pos2::new(
+                                col as f32 * cell_width - 3.0,
+                                (row as f32 * cell_height) + 38.0 + y_balance,
+                            ),
+                            Vec2::new(cell_width - 3.0, self.row_heights[row])
+                        );
+
+                        ui.painter().with_clip_rect(ui.clip_rect()).add(Shape::rect_filled(
+                            cell_rect,
+                            0.0,
+                            Color32::from_rgba_unmultiplied(0, 255, 0, 75),
+                        ));
+                    } else {
+                        self.highlight_pos = None;
+                        self.highlight_start = None;
                     }
                 }
             });
