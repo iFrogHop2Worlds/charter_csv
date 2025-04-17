@@ -1,6 +1,6 @@
 use eframe::App;
 use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin, Id, Rect, Pos2, FontId, Order};
-use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout, grid_search};
+use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout, grid_search, SearchResult};
 use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
@@ -33,7 +33,8 @@ pub struct CharterCsvApp {
     next_label_id: u32,
     show_labels: bool,
     chart_view_editing: bool,
-    search_text: String
+    search_text: String,
+    additional_searches: Vec<SearchResult>,
 }
 
 pub enum Screen {
@@ -79,6 +80,7 @@ impl Default for CharterCsvApp {
             show_labels: true,
             chart_view_editing: false,
             search_text: "".to_string(),
+            additional_searches: vec![],
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -532,16 +534,50 @@ impl CharterCsvApp {
                         }
 
                         ui.add_sized((200.0, 35.0), TextEdit::singleline(&mut self.search_text));
-                        if ui.add_sized((100.0, 35.0), Button::new("Search")).clicked() {
-                            if let Some(grid_layout) = self.grid_layout.as_mut() {
-                                let res = grid_search(&content.1, &self.search_text);
-                                if let Some(res) = res {
-                                    grid_layout.goto_grid_pos(ui, res.row, res.col, res.scroll_x, res.scroll_y);
-                                    println!("searching... {:?}", res);
+                        
+                        let search_rect = {
+                            let mut rect = None;
+                            ui.push_id("search_button", |ui| {
+                                let response = ui.add_sized((100.0, 35.0), Button::new("Search"));
+                                rect = Some(response.rect);
+                                if response.clicked() {
+                                    if let Some(grid_layout) = self.grid_layout.as_mut() {
+                                        let res = grid_search(&grid_layout, &content.1, &self.search_text);
+                                        if let Some(res) = res {
+                                            grid_layout.goto_grid_pos(ui, res.0.row, res.0.col, res.0.scroll_x, res.0.scroll_y);
+                                            self.additional_searches = res.1;
+                                        }
+                                    }
                                 }
+                            });
+                            rect.unwrap()
+                        };
 
-                            }
+                        if !self.additional_searches.is_empty() {
+                            let window_pos = egui::pos2(
+                                search_rect.min.x + 150.0,
+                                search_rect.min.y,
+                            );
 
+                            Window::new("Results")
+                                .fixed_pos(window_pos)
+                                .default_open(true)
+                                .resizable(false)
+                                .show(ui.ctx(), |ui| {
+                                   ScrollArea::vertical()
+                                        .min_scrolled_height(ui.available_height())
+                                        .max_height(ui.available_height())
+                                        .max_width(ui.available_width())
+                                        .show(ui, |ui| {
+                                            for search_result in &self.additional_searches {
+                                                if ui.button(format!("{:?}", search_result)).clicked() {
+                                                    if let Some(grid_layout) = self.grid_layout.as_mut() {
+                                                        grid_layout.goto_grid_pos(ui, search_result.row, search_result.col, search_result.scroll_x, search_result.scroll_y);
+                                                    };
+                                                }
+                                            }
+                                        })
+                                });
                         }
 
                         ui.add_space(ui.available_width());
