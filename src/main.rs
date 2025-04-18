@@ -6,6 +6,8 @@ pub mod charter_utilities;
 pub mod charter_graphs;
 mod charter_csv;
 pub mod session;
+mod db_manager;
+
 use charter_csv::CharterCsvApp;
 
 fn main() {
@@ -24,12 +26,6 @@ fn main() {
         "charter csv alpha 0.1.0",
         options,
         Box::new(|_cc| {
-            // let mut visuals = cc.egui_ctx.style().visuals.clone();
-            // visuals.window_fill = egui::Color32::from_rgb(32, 32, 32);
-            // visuals.panel_fill = egui::Color32::from_rgb(32, 32, 32);
-            // visuals.override_text_color = Some(egui::Color32::BLACK);
-            // cc.egui_ctx.set_visuals(visuals);
-
             Ok(Box::new(CharterCsvApp::default()))
         }),
     )

@@ -11,8 +11,11 @@ use image::{ImageReader};
 use std::collections::HashMap;
 use std::time::Instant;
 use itertools::Itertools;
+use crate::db_manager::{DatabaseConfig, DatabaseType, DbManager};
 
 pub struct CharterCsvApp {
+    db_manager: Option<DbManager>,
+    db_config: DatabaseConfig,
     texture: Option<TextureHandle>,
     screen: Screen,
     csv_files: Vec<(String, CsvGrid)>,
@@ -44,6 +47,7 @@ pub enum Screen {
     EditCsv { index: usize, content: (String, CsvGrid) },
     CreateChart,
     ViewChart,
+    Settings
 }
 
 #[derive(Debug)]
@@ -59,6 +63,8 @@ impl Default for CharterCsvApp {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
         let app = Self {
+            db_manager: None,
+            db_config: Default::default(),
             texture: None,
             screen: Screen::Main,
             csv_files: vec![],
@@ -153,6 +159,10 @@ impl App for CharterCsvApp {
                 self.screen = screen;
                 self.show_chart_screen(ctx)
             }
+            Screen::Settings => {
+                self.screen = screen;
+                self.render_settings(ctx)
+            }
         }
 
         self.sessions = load_sessions_from_directory().expect("Failed to restore sessions");
@@ -239,7 +249,7 @@ impl CharterCsvApp {
             ui.horizontal(|ui| {
                 Frame::NONE
                     .fill(Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE)
+                    .stroke(Stroke::NONE)
                     .inner_margin(Margin {
                         left: 60.0 as i8,
                         right: 10.0 as i8,
@@ -247,7 +257,6 @@ impl CharterCsvApp {
                         bottom: 5.0 as i8,
                     })
                     .show(ui, |ui| {
-
                         if ui.button("Load File").clicked() {
                             if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
                                 let path_as_string = path.to_str().unwrap().to_string();
@@ -300,6 +309,13 @@ impl CharterCsvApp {
                                     });
                                 });
                         }
+                        ui.add_space(ui.available_width() - 50.0);
+                        if ui.add(Button::new(RichText::new("⚙").size(25.0))
+                            .fill(Color32::TRANSPARENT))
+                            .clicked()
+                        {
+                            self.screen = Screen::Settings;
+                        }
                     });
             });
 
@@ -309,7 +325,7 @@ impl CharterCsvApp {
                     ui.heading(RichText::new("sessions").color(Color32::BLACK));
                     ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        ui.add_space(ui.available_width()/2.0 - 83.0);
+                        ui.add_space(ui.available_width() / 2.0 - 83.0);
                         if ui.button("New Session").clicked() {
                             self.show_ss_name_popup = true;
                         }
@@ -321,7 +337,7 @@ impl CharterCsvApp {
                                 file_paths.push(path.to_string());
                             }
                             for (_index, pipeline) in self.csvqb_pipelines.iter().enumerate() {
-                                for(index, query_string) in pipeline.iter() {
+                                for (index, query_string) in pipeline.iter() {
                                     let pipeline_str = index.to_string() + &*" ".to_string() + &*query_string.join(" ");
                                     pipelines.push(pipeline_str);
                                 }
@@ -413,9 +429,7 @@ impl CharterCsvApp {
                                     });
                                 });
                             }
-
                         });
-
                 });
             });
         });
@@ -484,8 +498,6 @@ impl CharterCsvApp {
                     });
                 }
             });
-            
-
         });
 
         if let Some(index) = files_to_remove {
@@ -496,12 +508,11 @@ impl CharterCsvApp {
         }
     }
 
-    fn show_csv_editor (
+    fn show_csv_editor(
         &mut self,
         ctx: &Context,
         content: &mut (String, CsvGrid),
         edit_index: Option<usize>,
-
     ) -> Option<Screen> {
         let frame = Frame::default()
             .fill(Color32::from_rgb(193, 200, 208));
@@ -538,7 +549,7 @@ impl CharterCsvApp {
                         }
 
                         ui.add(TextEdit::singleline(&mut self.search_text).desired_width(100.0));
-                        
+
                         let search_rect = {
                             let mut rect = None;
                             ui.push_id("search_button", |ui| {
@@ -631,7 +642,7 @@ impl CharterCsvApp {
                             self.screen = Screen::Main;
                         }
 
-                        ui.add_space(ui.available_width()/8.0);
+                        ui.add_space(ui.available_width() / 8.0);
                         egui::ComboBox::from_label("Select File")
                             .show_ui(ui, |ui| {
                                 for (index, file) in self.csv_files.iter().enumerate() {
@@ -646,7 +657,6 @@ impl CharterCsvApp {
                                             self.multi_pipeline_tracker.remove(&index);
                                             self.csvqb_pipelines.remove(index);
                                         }
-
                                     }
                                 }
                             });
@@ -722,8 +732,7 @@ impl CharterCsvApp {
                                             );
 
                                             ui.horizontal(|ui| {
-                                                ui.push_id(index , |ui|  {
-
+                                                ui.push_id(index, |ui| {
                                                     if ui.button("add pipeline").clicked() {
                                                         if self.multi_pipeline_tracker.contains_key(&_index) {
                                                             let _ = self.multi_pipeline_tracker.get_mut(&_index).expect("REASON").push(_index);
@@ -734,7 +743,6 @@ impl CharterCsvApp {
                                                             self.csvqb_pipelines[_index].push((_index, vec![]));
                                                         }
                                                     };
-
                                                 });
 
                                                 ui.push_id(index, |ui| {
@@ -760,7 +768,6 @@ impl CharterCsvApp {
                                                         if index < self.graph_data.len() {
                                                             self.graph_data.remove(index);
                                                         }
-
                                                     }
                                                 });
                                                 ui.add_space(112.0);
@@ -983,7 +990,7 @@ impl CharterCsvApp {
                                     }
                                 }
                                 ui.add_space(135.0);
-                        });
+                            });
                     });
                 });
 
@@ -1088,7 +1095,6 @@ impl CharterCsvApp {
                                         }
                                     });
                                 });
-
                             }
                             Frame::NONE
                                 .fill(ui.style().visuals.window_fill())
@@ -1167,6 +1173,88 @@ impl CharterCsvApp {
             self.graph_data.remove(index);
         }
     }
+
+    fn render_settings(&mut self, ctx: &Context) {
+        let frame = Frame::default()
+            .fill(Color32::from_rgb(193, 200, 208));
+
+        CentralPanel::default().frame(frame).show(ctx, |ui| {
+            Frame::NONE
+                .fill(Color32::from_rgb(193, 200, 208))
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        if ui.button("Home").clicked() {
+                            self.screen = Screen::Main;
+                        }
+
+                        if ui.button("Explorer").clicked() {
+                            self.screen = Screen::CreateChart;
+                        }
+
+                        if ui.button("Charts").clicked() {
+                            self.screen = Screen::ViewChart;
+                        }
+
+
+                        ui.add_space(ui.available_width());
+                    })
+                });
+
+            ui.add_space(21.0);
+
+            Frame::NONE
+                .fill(Color32::from_rgb(193, 200, 208))
+                .show(ui, |ui| {
+                   ui.vertical_centered_justified(|ui| {
+                       ui.heading("Settings");
+
+                       ui.add_space(20.0);
+                       ui.checkbox(&mut self.db_config.enabled, "Dark Mode");
+                       ui.add_space(10.0);
+                       ui.checkbox(&mut self.db_config.enabled, "Enable Database Support");
+
+                       if self.db_config.enabled {
+                           ui.add_space(10.0);
+                           ui.horizontal(|ui| {
+                               ui.add_space(ui.available_width() / 2.0 - 120.0);
+                               ui.label("Database Type:");
+                               if ui.radio_value(&mut self.db_config.db_type, DatabaseType::SQLite, "SQLite").clicked() {
+                                   println!("todo");
+                               }
+                               if ui.radio_value(&mut self.db_config.db_type, DatabaseType::PostgreSQL, "PostgreSQL").clicked() {
+                                   println!("todo");
+                               }
+                           });
+
+                           ui.add_space(10.0);
+
+                           match self.db_config.db_type {
+                               DatabaseType::SQLite => {
+                                   ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                       if ui.button("Choose SQLite Database Location").clicked() {
+                                           if let Some(path) = rfd::FileDialog::new()
+                                               .add_filter("SQLite Database", &["db", "sqlite"])
+                                               .save_file() {
+                                               self.db_config.sqlite_path = Some(path);
+                                           }
+                                       }
+
+                                       if let Some(path) = &self.db_config.sqlite_path {
+                                           ui.add_space(5.0);
+                                           ui.label(format!("Selected: {}", path.display()));
+                                       }
+                                   });
+                               }
+                               DatabaseType::PostgreSQL => {
+                                   // add connect string
+                                   ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                       //specific settings
+                                   });
+                               }
+                           }
+                       }
+                   })
+                });
+        });
+    }
 }
-
-
