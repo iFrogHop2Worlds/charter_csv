@@ -551,7 +551,7 @@ impl GridLayout {
                     let x: f32 = self.col_widths[start_col..col].iter().sum();
                     let y: f32 = self.row_heights[start_row..row].iter().sum();
                     let x_balance = col as f32 * -4.0;
-                    let y_balance = 42.0;
+                    let y_balance = 20.0;
                     let current_time = ui.input(|i| i.time);
                     let elapsed = current_time - start_time;
                     let cell_width = self.col_widths[col];
