@@ -1,9 +1,28 @@
+use std::error::Error;
 use std::path::PathBuf;
+use itertools::Itertools;
+use rusqlite::Connection;
+use crate::charter_utilities::{get_default_db_path, CsvGrid};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DatabaseType {
     SQLite,
     PostgreSQL,
+    MongoDB,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DatabaseSource {
+    Default,
+    Custom(PathBuf)
+}
+impl DatabaseSource {
+    pub fn get_path(&self) -> PathBuf {
+        match self {
+            DatabaseSource::Default => get_default_db_path(),
+            DatabaseSource::Custom(path) => path.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -11,7 +30,7 @@ pub struct DatabaseConfig {
     pub enabled: bool,
     pub db_type: DatabaseType,
     pub connection_string: String,
-    pub sqlite_path: Option<PathBuf>,
+    pub database_path: DatabaseSource,
 }
 
 impl Default for DatabaseConfig {
@@ -20,14 +39,14 @@ impl Default for DatabaseConfig {
             enabled: false,
             db_type: DatabaseType::SQLite,
             connection_string: String::new(),
-            sqlite_path: None,
+            database_path: DatabaseSource::Default,
         }
     }
 }
 
 pub struct DbManager {
     config: DatabaseConfig,
-    connection: Option<rusqlite::Connection>,
+    pub(crate) connection: Option<Connection>,
 }
 
 impl DbManager {
@@ -38,26 +57,106 @@ impl DbManager {
         }
     }
 
-    pub fn connect(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn connect(&mut self) -> Result<(), Box<dyn Error>> {
         match self.config.db_type {
             DatabaseType::SQLite => {
-                if let Some(path) = &self.config.sqlite_path {
-                    self.connection = Some(rusqlite::Connection::open(path)?);
-                }
+                let path = self.config.database_path.get_path();
+                self.connection = Some(Connection::open(path)?);
             }
             DatabaseType::PostgreSQL => {
+                // Future
+            }
+            DatabaseType::MongoDB => {
                 // Future
             }
         }
         Ok(())
     }
 
-    pub fn import_csv(&self, table_name: &str, csv_data: &[Vec<String>]) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(conn) = &self.connection {
-            // Todo(Billy)
-            // > Create table dynamically based on CSV headers
-            // > Insert data
+    pub fn import_all_csvs(conn: &Connection, csv_files: &Vec<(String, CsvGrid)>) -> Result<(), Box<dyn Error>> {
+        for (file_path, csv_grid) in csv_files {
+            let table_name = file_path
+                .split(['/', '\\'])
+                .last()
+                .and_then(|s| s.split('.').next())
+                .ok_or("Invalid file path")?;
+
+            println!("Importing {}...", table_name);
+            DbManager::import_csv(conn, table_name, csv_grid)?;
         }
         Ok(())
     }
+    pub fn import_csv(conn: &Connection, table_name: &str, csv_data: &CsvGrid) -> Result<(), Box<dyn Error>> {
+        if Some(conn).is_some() {
+            if csv_data.is_empty() {
+                return Err("Empty CSV data".into());
+            }
+            let table_name = table_name.split(['/', '\\', '-', ' '])
+                .map(|name| {
+                    name.chars()
+                        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+                        .collect::<String>()
+                }).join("_");
+            let check_table_sql = "SELECT name FROM sqlite_master WHERE type='table' AND name=?";
+            let exists: bool = conn.query_row(check_table_sql, [&table_name], |_| Ok(true))
+                .unwrap_or(false);
+
+            if !exists {
+                let headers = &csv_data[0].iter()
+                    .map(|h| {
+                        let sanitized = h.chars()
+                            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+                            .collect::<String>();
+
+
+                        let lower_sanitized = sanitized.to_lowercase();
+
+                        let column_name = if RESERVED_WORDS.contains(&lower_sanitized.as_str()) {
+                            format!("{}_{}", table_name, sanitized)
+                        } else {
+                            sanitized
+                        };
+
+                        format!("{}", column_name)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                const RESERVED_WORDS: &[&str] = &[
+                    "index", "Index", "group", "order", "table", "select", "where",
+                    "from", "having", "update", "delete", "references"
+                ];
+
+                let create_table_sql = format!(
+                    "CREATE TABLE {:?} ({})",
+                    table_name,
+                    headers
+
+                );
+
+                let _ = conn.execute(&create_table_sql, [])?;
+
+                let placeholders = vec!["?"; headers.len()].join(", ");
+                println!("headers: {:?}", headers);
+                let insert_sql = format!(
+                    "INSERT INTO {} ({}) VALUES ({})",
+                    table_name,
+                    headers,
+                    placeholders
+                );
+
+                let mut stmt = conn.prepare(&insert_sql)?;
+                for row in csv_data.iter().skip(1) {
+                    println!("{:?}", row);
+                    let params: Vec<&dyn rusqlite::ToSql> = row
+                        .iter()
+                        .map(|s| s as &dyn rusqlite::ToSql)
+                        .collect();
+                    stmt.execute(params.as_slice())?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
 }

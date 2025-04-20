@@ -1,6 +1,6 @@
 use eframe::App;
-use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, ViewportCommand, Window, Frame, Margin, Id, Rect, Pos2, FontId, Order, Stroke};
-use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout, grid_search, SearchResult};
+use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, Window, Frame, Margin, Id, FontId, Order, Stroke};
+use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout, grid_search, SearchResult, render_db_stats};
 use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
 use crate::csvqb::{process_csvqb_pipeline, Value};
@@ -11,7 +11,7 @@ use image::{ImageReader};
 use std::collections::HashMap;
 use std::time::Instant;
 use itertools::Itertools;
-use crate::db_manager::{DatabaseConfig, DatabaseType, DbManager};
+use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager};
 
 pub struct CharterCsvApp {
     db_manager: Option<DbManager>,
@@ -38,6 +38,7 @@ pub struct CharterCsvApp {
     chart_view_editing: bool,
     search_text: String,
     additional_searches: Vec<SearchResult>,
+    dark_mode_enabled: bool
 }
 
 pub enum Screen {
@@ -87,6 +88,7 @@ impl Default for CharterCsvApp {
             chart_view_editing: false,
             search_text: "".to_string(),
             additional_searches: vec![],
+            dark_mode_enabled: false,
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -194,6 +196,7 @@ impl App for CharterCsvApp {
             }
             self.prev_session = self.current_session;
         }
+
     }
 }
 impl CharterCsvApp {
@@ -1209,20 +1212,28 @@ impl CharterCsvApp {
                        ui.heading("Settings");
 
                        ui.add_space(20.0);
-                       ui.checkbox(&mut self.db_config.enabled, "Dark Mode");
+                       ui.checkbox(&mut self.dark_mode_enabled, "Dark Mode").changed().then(|| {
+                           if self.dark_mode_enabled {
+                               ctx.set_theme(egui::Theme::Dark);
+                           } else {
+                               ctx.set_theme(egui::Theme::Light);
+                           }
+                       });
+
                        ui.add_space(10.0);
                        ui.checkbox(&mut self.db_config.enabled, "Enable Database Support");
 
                        if self.db_config.enabled {
+
                            ui.add_space(10.0);
                            ui.horizontal(|ui| {
                                ui.add_space(ui.available_width() / 2.0 - 120.0);
                                ui.label("Database Type:");
                                if ui.radio_value(&mut self.db_config.db_type, DatabaseType::SQLite, "SQLite").clicked() {
-                                   println!("todo");
+                                   println!("SQLite");
                                }
                                if ui.radio_value(&mut self.db_config.db_type, DatabaseType::PostgreSQL, "PostgreSQL").clicked() {
-                                   println!("todo");
+                                   println!("PostgreSQL");
                                }
                            });
 
@@ -1231,27 +1242,63 @@ impl CharterCsvApp {
                            match self.db_config.db_type {
                                DatabaseType::SQLite => {
                                    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                                       if ui.button("Choose SQLite Database Location").clicked() {
-                                           if let Some(path) = rfd::FileDialog::new()
-                                               .add_filter("SQLite Database", &["db", "sqlite"])
-                                               .save_file() {
-                                               self.db_config.sqlite_path = Some(path);
+                                       ui.horizontal(|ui| {
+                                           ui.add_space(ui.available_width() / 2.0 - 120.0);
+                                           ui.radio_value(
+                                               &mut self.db_config.database_path,
+                                               DatabaseSource::Default,
+                                               "Use Built-in Database"
+                                           );
+                                           let current_path = self.db_config.database_path.get_path();
+                                           ui.radio_value(
+                                               &mut self.db_config.database_path,
+                                               DatabaseSource::Custom(current_path),
+                                               "I have my own database"
+                                           );
+                                       });
+
+                                       if matches!(self.db_config.database_path, DatabaseSource::Custom(_)) {
+                                           if ui.button("Choose SQLite Database Location").clicked() {
+                                               if let Some(path) = rfd::FileDialog::new()
+                                                   .add_filter("SQLite Database", &["db", "sqlite"])
+                                                   .save_file() {
+                                                   self.db_config.database_path = DatabaseSource::Custom(path);
+                                               }
+                                           }
+
+                                           if let DatabaseSource::Custom(path) = &self.db_config.database_path {
+                                               ui.add_space(5.0);
+                                               ui.label(format!("Selected: {}", path.display()));
                                            }
                                        }
 
-                                       if let Some(path) = &self.db_config.sqlite_path {
-                                           ui.add_space(5.0);
-                                           ui.label(format!("Selected: {}", path.display()));
+                                       if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+
+                                           if let Err(err) = DbManager::import_all_csvs(&conn, &self.csv_files) {
+                                               println!("err {}", err)
+                                           }
+
+                                           if let Err(err) = render_db_stats(ui, &conn) {
+                                               ui.label(format!("Error loading database stats: {}", err));
+                                           }
                                        }
                                    });
+
                                }
                                DatabaseType::PostgreSQL => {
-                                   // add connect string
+                                   // todo(Billy) implement PostgresSQL
+                                   ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                       //specific settings
+                                   });
+                               }
+                               DatabaseType::MongoDB => {
+                                   // todo(Billy) implement MongoDB
                                    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                                        //specific settings
                                    });
                                }
                            }
+
                        }
                    })
                 });

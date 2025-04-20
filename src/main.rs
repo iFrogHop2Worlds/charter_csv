@@ -25,7 +25,8 @@ fn main() {
     eframe::run_native(
         "charter csv alpha 0.1.0",
         options,
-        Box::new(|_cc| {
+        Box::new(|cc| {
+            cc.egui_ctx.set_theme(egui::Theme::Light);
             Ok(Box::new(CharterCsvApp::default()))
         }),
     )

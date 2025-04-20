@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText, ScrollArea, Vec2, TextEdit, Response, Sense, CursorIcon, StrokeKind, Align};
 use egui::epaint::TextShape;
 use crate::charter_csv::PlotPoint;
@@ -604,5 +605,79 @@ impl GridLayout {
             self.row_heights.push(20.0);
         }
     }
+
 }
 
+pub fn get_default_db_path() -> PathBuf {
+    let mut app_data = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("your_app_name");
+
+    std::fs::create_dir_all(&app_data).unwrap_or_default();
+    app_data.join("default.db")
+}
+
+
+pub fn render_db_stats(ui: &mut egui::Ui, conn: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
+    let table_names: Vec<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(Result::ok)
+        .collect();
+
+    let total_tables = table_names.len();
+    let mut total_rows = 0;
+    let mut total_columns = 0;
+
+    for table_name in &table_names {
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table_name))?;
+        let columns: usize = stmt
+            .query_map([], |_| Ok(1))?
+            .count();
+        total_columns += columns;
+
+        let mut stmt = conn.prepare(&format!("SELECT COUNT(*) FROM {}", table_name))?;
+        let rows: i64 = stmt.query_row([], |row| row.get(0))?;
+        total_rows += rows;
+    }
+
+    ui.add_space(10.0);
+    ui.heading("Database Statistics");
+    ui.add_space(5.0);
+
+    ui.label(format!("Total Tables: {}", total_tables));
+    ui.label(format!("Total Columns: {}", total_columns));
+    ui.label(format!("Total Rows: {}", total_rows));
+
+    ui.add_space(5.0);
+    ui.label("Table Names:");
+    for table_name in &table_names {
+        ui.label(format!("• {}", &table_name));
+    }
+    ui.add_space(10.0);
+
+    // Add a destructive red button
+    let drop_button = ui.add(egui::Button::new("🗑 Drop All Tables")
+        .fill(Color32::from_rgb(200, 50, 50)));
+
+    if drop_button.clicked() {
+        println!("clicked");
+        // let ctrl_d_pressed = ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::D));
+        // let confirm_button_clicked = ui.add(egui::Button::new("⚠ Confirm Drop All Tables")).clicked();
+        //
+        // if ctrl_d_pressed && confirm_button_clicked {
+            for table_name in &table_names {
+                println!("Dropping table: {}", table_name);
+                if let Err(e) = conn.execute(&format!("DROP TABLE IF EXISTS {}", table_name), []) {
+                    eprintln!("Failed to drop table '{}': {}", table_name, e);
+                }
+            }
+        // }
+    }
+
+    if ui.button("⚠ Hold CTRL+D and click to confirm").clicked() {
+        ui.label("Please hold CTRL+D while clicking to confirm this destructive action");
+    }
+
+    Ok(())
+}
