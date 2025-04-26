@@ -266,7 +266,7 @@ impl CharterCsvApp {
                                 let sender = self.file_sender.clone();
                                 thread::spawn(move || {
                                     if let Ok(content) = std::fs::read_to_string(&path) {
-                                        let grid: CsvGrid = csv2grid(&content);
+                                        let grid: CsvGrid = csv2grid(&content).expect("Failed to load csv files");
                                         let _ = sender.send((path_as_string, grid));
                                     }
                                 });
@@ -460,7 +460,7 @@ impl CharterCsvApp {
                                 let sender = self.file_sender.clone();
                                 thread::spawn(move || {
                                     if let Ok(content) = std::fs::read_to_string(&path) {
-                                        let grid: CsvGrid = csv2grid(&content);
+                                        let grid: CsvGrid = csv2grid(&content).expect("Failed to load file");
                                         let _ = sender.send((path_as_string, grid));
                                     }
                                 });
@@ -1272,9 +1272,9 @@ impl CharterCsvApp {
                                            }
                                        }
 
-                                       if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                                       if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
 
-                                           if let Err(err) = DbManager::import_all_csvs(&conn, &self.csv_files) {
+                                           if let Err(err) = DbManager::import_all_csvs(&mut conn, &self.csv_files) {
                                                println!("err {}", err)
                                            }
 

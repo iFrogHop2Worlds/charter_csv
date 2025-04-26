@@ -135,7 +135,7 @@ pub fn reconstruct_session(
     thread::spawn(move || {
         for file_path in files {
             if let Ok(content) = fs::read_to_string(&file_path) {
-                let grid: CsvGrid = csv2grid(&content);
+                let grid: CsvGrid = csv2grid(&content).expect("Failed to load file in session reconstruction");
                 let _ = sender.send((file_path, grid));
             }
         }
