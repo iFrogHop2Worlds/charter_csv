@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText, ScrollArea, Vec2, TextEdit, Response, Sense, CursorIcon, StrokeKind, Align};
 use egui::epaint::TextShape;
 use crate::charter_csv::PlotPoint;
-use crate::csvqb::Value;
+use crate::csvqb::CIR;
 use rfd::FileDialog;
 
 #[derive(Clone, Debug)]
@@ -19,64 +19,7 @@ pub enum CsvError {
     ParseError(String),
 }
 
-pub fn csv2grid(content: &str) -> Result<CsvGrid, CsvError> {
-    let mut grid: CsvGrid = Vec::new();
-    let mut in_quote = false;
-    let mut current_field = String::new();
-    let mut current_row: Vec<String> = Vec::new();
 
-    for (line_num, line) in content.lines().enumerate() {
-        let chars: Vec<char> = line.chars().collect();
-        let mut i = 0;
-
-        while i < chars.len() {
-            match chars[i] {
-                '"' => {
-                    if in_quote && i + 1 < chars.len() && chars[i + 1] == '"' {
-                        current_field.push('"');
-                        i += 2;
-                    } else {
-                        in_quote = !in_quote;
-                        i += 1;
-                    }
-                }
-                ',' => {
-                    if !in_quote {
-                        current_row.push(current_field.trim().to_string());
-                        current_field.clear();
-                    } else {
-                        current_field.push(',');
-                    }
-                    i += 1;
-                }
-                _ => {
-                    current_field.push(chars[i]);
-                    i += 1;
-                }
-            }
-        }
-
-        current_row.push(current_field.trim().to_string());
-        current_field.clear();
-
-        if in_quote {
-            return Err(CsvError::ParseError(
-                format!("Unclosed quote in line {}", line_num + 1)
-            ));
-        }
-
-        if !current_row.is_empty() {
-            if !grid.is_empty() && grid[0].len() != current_row.len() {
-                return Err(CsvError::ParseError(
-                    format!("Inconsistent number of columns in line {}", line_num + 1)
-                ));
-            }
-            grid.push(std::mem::take(&mut current_row));
-        }
-    }
-
-    Ok(grid)
-}
 pub fn grid2csv(grid: &CsvGrid) -> String {
     grid.iter()
         .map(|row| row.join(","))
@@ -161,7 +104,67 @@ pub fn load_icon() -> egui::IconData {
     }
 }
 
-pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
+pub fn csv_parser(content: &str) -> Result<CsvGrid, CsvError> {
+    let mut grid: CsvGrid = Vec::new();
+    let mut in_quote = false;
+    let mut current_field = String::new();
+    let mut current_row: Vec<String> = Vec::new();
+
+    for (line_num, line) in content.lines().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+
+        while i < chars.len() {
+            match chars[i] {
+                '"' => {
+                    if in_quote && i + 1 < chars.len() && chars[i + 1] == '"' {
+                        current_field.push('"');
+                        i += 2;
+                    } else {
+                        in_quote = !in_quote;
+                        i += 1;
+                    }
+                }
+                ',' => {
+                    if !in_quote {
+                        current_row.push(current_field.trim().to_string());
+                        current_field.clear();
+                    } else {
+                        current_field.push(',');
+                    }
+                    i += 1;
+                }
+                _ => {
+                    current_field.push(chars[i]);
+                    i += 1;
+                }
+            }
+        }
+
+        current_row.push(current_field.trim().to_string());
+        current_field.clear();
+
+        if in_quote {
+            return Err(CsvError::ParseError(
+                format!("Unclosed quote in line {}", line_num + 1)
+            ));
+        }
+
+        if !current_row.is_empty() {
+            if !grid.is_empty() && grid[0].len() != current_row.len() {
+                return Err(CsvError::ParseError(
+                    format!("Inconsistent number of columns in line {}", line_num + 1)
+                ));
+            }
+            grid.push(std::mem::take(&mut current_row));
+        }
+    }
+
+    Ok(grid)
+}
+
+/// The cir(Charting Intermediate Representation) parser transforms our semantic query data into a more charting friendly format.
+pub fn cir_parser(graph_data: Vec<CIR>) -> Vec<PlotPoint> {
     if graph_data.is_empty() {
         return Vec::new(); 
     }
@@ -170,9 +173,9 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
     let mut i = 0;
     while i < graph_data.len() {
         match &graph_data[i] {
-            Value::Number(num) => {
+            CIR::Number(num) => {
                 if i + 1 < graph_data.len() {
-                    if let Value::Field(label) = &graph_data[i + 1] {
+                    if let CIR::Field(label) = &graph_data[i + 1] {
                         println!("gd -----> \n {:?}", &graph_data);
                         plot_data.push(PlotPoint {
                             label: label.to_string(),
@@ -191,7 +194,7 @@ pub fn format_graph_query(graph_data: Vec<Value>) -> Vec<PlotPoint> {
                     i += 1;
                 }
             }
-            Value::QueryResult(query_result) => {
+            CIR::QueryResult(query_result) => {
                 if query_result.is_empty() {
                     println!("QueryResult is empty");
                     i += 1;

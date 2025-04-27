@@ -1,7 +1,8 @@
 use crate::charter_utilities::CsvGrid;
 
+/// CIR is the Charting Intermediate Representation
 #[derive(Debug, Clone)]
-pub enum Value {
+pub enum CIR {
     Bool(bool),
     Number(f64),
     Text(String),
@@ -310,9 +311,9 @@ pub fn process_csvqb_pipeline(
     qb_pipeline: &[String],
     file_indexes: &Vec<usize>,
     files: &Vec<(String, CsvGrid)>
-) -> Vec<Value> {
-    let mut stack: Vec<Value> = vec![];
-    let mut results: Vec<Value> = Vec::new();
+) -> Vec<CIR> {
+    let mut stack: Vec<CIR> = vec![];
+    let mut results: Vec<CIR> = Vec::new();
     let mut capture_group: Vec<String> = Vec::new();
     let mut i = 0;
 
@@ -342,15 +343,15 @@ pub fn process_csvqb_pipeline(
                     let result = match operation {
                         "CSUM" => {
                             let sum = col_sum(file_indexes, files, field, filter_condition.as_deref());
-                            Value::QueryResult(sum)
+                            CIR::QueryResult(sum)
                         }
                         "CCOUNT" => {
                             let counts = col_count(file_indexes, files, field, filter_condition.as_deref());
-                            Value::QueryResult(counts)
+                            CIR::QueryResult(counts)
                         }
                         "CAVG" => {
                             let avg = col_average(file_indexes, files, field, filter_condition.as_deref());
-                            Value::QueryResult(avg)
+                            CIR::QueryResult(avg)
                         }
 
                         _ => unreachable!()
@@ -363,11 +364,11 @@ pub fn process_csvqb_pipeline(
             }
             "MUL" => {
                 println!("stack: {:?}", stack);
-                if let (Some(Value::QueryResult(right)), Some(Value::QueryResult(left))) = (stack.pop(), stack.pop()) {
+                if let (Some(CIR::QueryResult(right)), Some(CIR::QueryResult(left))) = (stack.pop(), stack.pop()) {
                     if let (Ok(left_val), Ok(right_val)) = (left[1][1].parse::<f64>(), right[1][1].parse::<f64>()) {
-                        stack.push(Value::Number(left_val * right_val));
-                        results.push(Value::Number(left_val * right_val));
-                        results.push(Value::Field(left[0][0].clone() + " * ".as_str() + &right[0][0]));
+                        stack.push(CIR::Number(left_val * right_val));
+                        results.push(CIR::Number(left_val * right_val));
+                        results.push(CIR::Field(left[0][0].clone() + " * ".as_str() + &right[0][0]));
                     }
                 } else {
                     println!("err in MUL");
@@ -384,8 +385,8 @@ pub fn process_csvqb_pipeline(
                     match qb_pipeline[i].as_str() {
                         ">" => {
                             let comparison = match (left, right) {
-                                (Value::Number(left), Value::Number(right)) => {
-                                    Value::Bool(left > right)
+                                (CIR::Number(left), CIR::Number(right)) => {
+                                    CIR::Bool(left > right)
                                 }
                                 _ => unreachable!()
                             };
@@ -393,8 +394,8 @@ pub fn process_csvqb_pipeline(
                         }
                         "<" => {
                             let comparison = match (left, right) {
-                                (Value::Number(left), Value::Number(right)) => {
-                                    Value::Bool(left < right)
+                                (CIR::Number(left), CIR::Number(right)) => {
+                                    CIR::Bool(left < right)
                                 }
                                 _ => unreachable!()
                             };
@@ -402,8 +403,8 @@ pub fn process_csvqb_pipeline(
                         }
                         "=" => {
                             let comparison = match (left, right) {
-                                (Value::Number(left), Value::Number(right)) => {
-                                    Value::Bool(left == right)
+                                (CIR::Number(left), CIR::Number(right)) => {
+                                    CIR::Bool(left == right)
                                 }
                                 _ => unreachable!()
                             };
@@ -436,10 +437,10 @@ pub fn process_csvqb_pipeline(
 
             _ => {
                 if let Ok(num) = qb_pipeline[i].parse::<f64>() {
-                    stack.push(Value::Number(num));
+                    stack.push(CIR::Number(num));
                 }
                 else {
-                    results.push(Value::Field(qb_pipeline[i].clone()));
+                    results.push(CIR::Field(qb_pipeline[i].clone()));
                 }
                 i+=1
             }

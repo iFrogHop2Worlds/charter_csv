@@ -1,9 +1,9 @@
 use eframe::App;
 use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, Window, Frame, Margin, Id, FontId, Order, Stroke};
-use crate::charter_utilities::{csv2grid, grid2csv, CsvGrid, format_graph_query, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout, grid_search, SearchResult, render_db_stats};
+use crate::charter_utilities::{csv_parser, grid2csv, CsvGrid, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout, grid_search, SearchResult, render_db_stats, cir_parser};
 use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
-use crate::csvqb::{process_csvqb_pipeline, Value};
+use crate::csvqb::{process_csvqb_pipeline, CIR};
 pub use std::thread;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -22,7 +22,7 @@ pub struct CharterCsvApp {
     grid_layout: Option<GridLayout>,
     csvqb_pipelines: Vec<Vec<(usize, Vec<String>)>>,
     multi_pipeline_tracker: HashMap<usize, Vec<usize>>,
-    graph_data: Vec<Vec<Value>>,
+    graph_data: Vec<Vec<CIR>>,
     file_receiver: Receiver<(String, Vec<Vec<String>>)>,
     file_sender: Sender<(String, Vec<Vec<String>>)>,
     chart_style_prototype: String,
@@ -38,7 +38,8 @@ pub struct CharterCsvApp {
     chart_view_editing: bool,
     search_text: String,
     additional_searches: Vec<SearchResult>,
-    dark_mode_enabled: bool
+    dark_mode_enabled: bool,
+    sql_mode: bool,
 }
 
 pub enum Screen {
@@ -89,6 +90,7 @@ impl Default for CharterCsvApp {
             search_text: "".to_string(),
             additional_searches: vec![],
             dark_mode_enabled: false,
+            sql_mode: false,
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -266,7 +268,7 @@ impl CharterCsvApp {
                                 let sender = self.file_sender.clone();
                                 thread::spawn(move || {
                                     if let Ok(content) = std::fs::read_to_string(&path) {
-                                        let grid: CsvGrid = csv2grid(&content).expect("Failed to load csv files");
+                                        let grid: CsvGrid = csv_parser(&content).expect("Failed to load csv files");
                                         let _ = sender.send((path_as_string, grid));
                                     }
                                 });
@@ -361,6 +363,10 @@ impl CharterCsvApp {
                     ui.heading(RichText::new("Welcome to Charter CSV!").color(Color32::BLACK));
                     ui.add_space(40.0);
                     ui.label(RichText::new("Create a new session to get started.").color(Color32::BLACK));
+                    ui.add_space(10.0);
+                    if ui.button("New Session").clicked() {
+                        self.show_ss_name_popup = true;
+                    }
                     ui.add_space(20.0);
                     ui.label(RichText::new("You can use the app without a session but it is best to create a session to work in.").color(Color32::BLACK));
                     ui.add_space(20.0);
@@ -460,7 +466,7 @@ impl CharterCsvApp {
                                 let sender = self.file_sender.clone();
                                 thread::spawn(move || {
                                     if let Ok(content) = std::fs::read_to_string(&path) {
-                                        let grid: CsvGrid = csv2grid(&content).expect("Failed to load file");
+                                        let grid: CsvGrid = csv_parser(&content).expect("Failed to load file");
                                         let _ = sender.send((path_as_string, grid));
                                     }
                                 });
@@ -679,13 +685,77 @@ impl CharterCsvApp {
                             let selected_files = &self.multi_pipeline_tracker.keys().copied().collect::<Vec<usize>>();
                             for (root, indexes) in self.multi_pipeline_tracker.iter() {
                                 for (i, _) in indexes.iter().enumerate() {
-                                    let result = process_csvqb_pipeline(
-                                        &*self.csvqb_pipelines[*root][i].1,
-                                        selected_files,
-                                        &self.csv_files,
-                                    );
-                                    if !result.is_empty() {
-                                        self.graph_data.push(result);
+                                    if self.sql_mode {
+                                        if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                                            let combined_query = self.csvqb_pipelines[*root][i].1.join(" ");
+                                            println!("Executing query: {}", combined_query);
+                                            let mut stmt = match conn.prepare(&combined_query) {
+                                                Ok(stmt) => stmt,
+                                                Err(e) => {
+                                                    eprintln!("Error preparing SQL statement: {}", e);
+                                                    return; // or handle error appropriately
+                                                }
+                                            };
+
+                                            // Get column names
+                                            let column_names: Vec<String> = stmt.column_names()
+                                                .iter()
+                                                .map(|&name| name.to_string())
+                                                .collect();
+
+                                            let mut result_rows: Vec<Vec<String>> = vec![column_names];
+                                            let column_count = stmt.column_count();
+                                            // Execute query and collect results
+                                            let rows = match stmt.query_map([], |row| {
+                                                let mut row_data = Vec::new();
+                                                for i in 0..column_count {
+                                                    let value = match row.get_ref(i)? {
+                                                        rusqlite::types::ValueRef::Null => "NULL".to_string(),
+                                                        rusqlite::types::ValueRef::Integer(i) => i.to_string(),
+                                                        rusqlite::types::ValueRef::Real(f) => f.to_string(),
+                                                        rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).to_string(),
+                                                        rusqlite::types::ValueRef::Blob(_) => "[BLOB]".to_string(),
+                                                    };
+                                                    row_data.push(value);
+                                                }
+                                                Ok(row_data)
+                                            }) {
+                                                Ok(rows) => rows,
+                                                Err(e) => {
+                                                    eprintln!("Error executing query: {}", e);
+                                                    continue;
+                                                }
+                                            };
+
+                                            // Collect the rows
+                                            for row_result in rows {
+                                                match row_result {
+                                                    Ok(row) => result_rows.push(row),
+                                                    Err(e) => {
+                                                        eprintln!("Error reading row: {}", e);
+                                                        continue;
+                                                    }
+                                                }
+                                            }
+
+                                            // Convert to Value::QueryResult and add to graph_data
+                                            if !result_rows.is_empty() {
+                                                let mut results = Vec::new();
+                                                results.push(CIR::QueryResult(result_rows));
+                                                self.graph_data.push(results);
+                                            }
+
+                                        }
+
+                                    } else {
+                                        let result = process_csvqb_pipeline(
+                                            &*self.csvqb_pipelines[*root][i].1, // queries
+                                            selected_files,  // selected tables
+                                            &self.csv_files, // our local sql lite db @ self.db_config.database_path.get_path();
+                                        );
+                                        if !result.is_empty() {
+                                            self.graph_data.push(result);
+                                        }
                                     }
                                 }
                             }
@@ -693,6 +763,12 @@ impl CharterCsvApp {
 
                         if ui.button("View charts").clicked() {
                             self.screen = Screen::ViewChart;
+                        }
+
+                        if ui.button("SQL Mode").clicked() {
+                           if self.db_config.enabled {
+                               self.sql_mode = !self.sql_mode;
+                           }
                         }
                         ui.add_space(ui.available_width());
                     });
@@ -853,7 +929,7 @@ impl CharterCsvApp {
                                                 } else {
                                                     String::new()
                                                 };
-
+                                                // todo (Bill): start with adding sql queries here and will figure out how to work everything else as we go..
                                                 if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
                                                     while self.csvqb_pipelines[*pipeline_index].len() <= index {
                                                         self.csvqb_pipelines[*pipeline_index].push((index, Vec::new()));
@@ -1071,7 +1147,7 @@ impl CharterCsvApp {
             ScrollArea::both().show(ui, |ui| {
                 for (index, graph_query) in self.graph_data.iter().enumerate() {
                     let window_id = ui.make_persistent_id(format!("chart_window_{}", index));
-                    let formatted_data = Some(format_graph_query(graph_query.clone()));
+                    let formatted_data = Some(cir_parser(graph_query.clone()));
                     Window::new("")
                         .id(window_id)
                         .collapsible(false)
@@ -1146,22 +1222,22 @@ impl CharterCsvApp {
                                         }
                                     }
                                     match &graph_query[0] {
-                                        Value::Field(graph_type) if graph_type == "Bar Graph" => {
+                                        CIR::Field(graph_type) if graph_type == "Bar Graph" => {
                                             let _ = draw_bar_graph(ui, formatted_data);
                                         }
-                                        Value::Field(graph_type) if graph_type == "Pie Chart" => {
+                                        CIR::Field(graph_type) if graph_type == "Pie Chart" => {
                                             let _ = draw_pie_chart(ui, formatted_data);
                                         }
-                                        Value::Field(graph_type) if graph_type == "Histogram" => {
+                                        CIR::Field(graph_type) if graph_type == "Histogram" => {
                                             let _ = draw_histogram(ui, formatted_data);
                                         }
-                                        Value::Field(graph_type) if graph_type == "Scatter Plot" => {
+                                        CIR::Field(graph_type) if graph_type == "Scatter Plot" => {
                                             let _ = draw_scatter_plot(ui, formatted_data);
                                         }
-                                        Value::Field(graph_type) if graph_type == "Line Chart" => {
+                                        CIR::Field(graph_type) if graph_type == "Line Chart" => {
                                             let _ = draw_line_chart(ui, formatted_data);
                                         }
-                                        Value::Field(graph_type) if graph_type == "Flame Graph" => {
+                                        CIR::Field(graph_type) if graph_type == "Flame Graph" => {
                                             let _ = draw_flame_graph(ui, formatted_data);
                                         }
                                         _ => {}

@@ -3,7 +3,7 @@ use std::io::{self, Write, BufRead, BufReader};
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
-use crate::charter_utilities::{csv2grid, CsvGrid};
+use crate::charter_utilities::{csv_parser, CsvGrid};
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -135,7 +135,7 @@ pub fn reconstruct_session(
     thread::spawn(move || {
         for file_path in files {
             if let Ok(content) = fs::read_to_string(&file_path) {
-                let grid: CsvGrid = csv2grid(&content).expect("Failed to load file in session reconstruction");
+                let grid: CsvGrid = csv_parser(&content).expect("Failed to load file in session reconstruction");
                 let _ = sender.send((file_path, grid));
             }
         }

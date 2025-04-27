@@ -125,8 +125,22 @@ impl DbManager {
                 .join(", ");
 
             const RESERVED_WORDS: &[&str] = &[
-                "index", "Index", "group", "order", "table", "select", "where",
-                "from", "having", "update", "delete", "references"
+                "index", "Index", "group", "order", "table", "select", "where", "from", "having", "update",
+                "delete", "references", "ABORT", "ACTION", "ADD", "AFTER", "ALL", "ALTER", "ALWAYS", "ANALYZE",
+                "AND", "AS", "ASC", "ATTACH", "AUTOINCREMENT", "BEFORE", "BEGIN", "BETWEEN", "BY", "CASCADE",
+                "CASE", "CAST", "CHECK", "COLLATE", "COLUMN", "COMMIT", "CONFLICT", "CONSTRAINT", "CREATE",
+                "CROSS", "CURRENT", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "DATABASE", "DEFAULT",
+                "DEFERRABLE", "DEFERRED", "DESC", "DETACH", "DISTINCT", "DO", "DROP", "EACH", "ELSE", "END",
+                "ESCAPE", "EXCEPT", "EXCLUSIVE", "EXISTS", "EXPLAIN", "FAIL", "FILTER", "FIRST", "FOLLOWING",
+                "FOR", "FOREIGN", "FULL", "GENERATED", "GLOB", "GROUPS", "IF", "IGNORE", "IMMEDIATE", "IN",
+                "INDEXED", "INITIALLY", "INNER", "INSERT", "INSTEAD", "INTERSECT", "INTO", "IS", "ISNULL",
+                "JOIN", "KEY", "LAST", "LEFT", "LIKE", "LIMIT", "MATCH", "NATURAL", "NO", "NOT", "NOTHING",
+                "NOTNULL", "NULL", "NULLS", "OF", "OFFSET", "ON", "OR", "OTHERS", "OUTER", "OVER", "PARTITION",
+                "PLAN", "PRAGMA", "PRECEDING", "PRIMARY", "QUERY", "RAISE", "RANGE", "RECURSIVE", "REGEXP",
+                "REINDEX", "RELEASE", "RENAME", "REPLACE", "RESTRICT", "RETURNING", "RIGHT", "ROLLBACK", "ROW",
+                "ROWS", "SAVEPOINT", "SET", "STORED", "TEMP", "TEMPORARY", "THEN", "TIES", "TO", "TRANSACTION",
+                "TRIGGER", "UNBOUNDED", "UNION", "UNIQUE", "USING", "VACUUM", "VALUES", "VIEW", "VIRTUAL",
+                "WHEN", "WINDOW", "WITH", "WITHOUT"
             ];
 
             let create_table_sql = format!(
