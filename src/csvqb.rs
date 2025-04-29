@@ -33,14 +33,12 @@ pub fn col_sum(
         if let Some((_, grid)) = csv_files.get(file_idx) {
             if grid.is_empty() { continue; }
 
-            // Find column index
             let headers = &grid[0];
             let col_idx = match headers.iter().position(|h| h == column) {
                 Some(idx) => idx,
                 None => continue,
             };
 
-            // Process data rows
             for row in grid.iter().skip(1) {
                 if row.len() <= col_idx { continue; }
 
@@ -307,7 +305,7 @@ fn filter_greater_than(
     result
 }
 
-pub fn process_csvqb_pipeline(
+pub fn csvqb_to_cir(
     qb_pipeline: &[String],
     file_indexes: &Vec<usize>,
     files: &Vec<(String, CsvGrid)>
@@ -422,13 +420,13 @@ pub fn process_csvqb_pipeline(
                         if qb_pipeline[i] == ")" {
                             break
                         }
-                        let result = process_csvqb_pipeline(&qb_pipeline[i + 1..], file_indexes, files);
-                        println!("result: {},  {:?}", i, result);
-                        println!("stack: {},  {:?}", i, stack);
+                        let result = csvqb_to_cir(&qb_pipeline[i + 1..], file_indexes, files);
+
                         if !result.is_empty() {
                             results.push(result[0].clone());
                             break;
                         }
+
                         i+=1
                     }
                 }

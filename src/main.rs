@@ -7,6 +7,7 @@ pub mod charter_graphs;
 mod charter_csv;
 pub mod session;
 mod db_manager;
+mod cir_adapters;
 
 use charter_csv::CharterCsvApp;
 
