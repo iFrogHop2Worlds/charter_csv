@@ -1,5 +1,5 @@
 use eframe::App;
-use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, Window, Frame, Margin, Id, FontId, Order, Stroke};
+use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, Window, Frame, Margin, Id, FontId, Order, Stroke, Align};
 use crate::charter_utilities::{csv_parser, grid2csv, CsvGrid, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout, grid_search, SearchResult, render_db_stats, cir_parser};
 use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
@@ -9,6 +9,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use image::{ImageReader};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::Instant;
 use itertools::Itertools;
 use crate::cir_adapters::sqlite_cir_adapter;
@@ -40,7 +41,7 @@ pub struct CharterCsvApp {
     search_text: String,
     additional_searches: Vec<SearchResult>,
     dark_mode_enabled: bool,
-    sql_mode: bool,
+    query_mode: DatabaseType,
 }
 
 pub enum Screen {
@@ -91,7 +92,7 @@ impl Default for CharterCsvApp {
             search_text: "".to_string(),
             additional_searches: vec![],
             dark_mode_enabled: false,
-            sql_mode: false,
+            query_mode: DatabaseType::CsvQB,
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -158,7 +159,7 @@ impl App for CharterCsvApp {
             }
             Screen::CreateChart => {
                 self.screen = screen;
-                self.create_chart_screen(ctx);
+                self.data_explorer_screen(ctx);
             }
             Screen::ViewChart => {
                 self.screen = screen;
@@ -185,19 +186,33 @@ impl App for CharterCsvApp {
                 for file in &self.sessions[ssi].selected_files {
                     self.multi_pipeline_tracker.insert(*file, vec![*file]);
                 }
+                let query_mode = self.sessions[ssi].query_mode.clone();
+                self.query_mode = query_mode;
 
             }
-            let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
+            let selected_files: Vec<usize> = self.multi_pipeline_tracker.keys().copied().sorted().collect();
             for (_index, pipelines) in self.csvqb_pipelines.iter().enumerate() {
-                for (_, fields) in pipelines.iter() {
-                    let result = csvqb_to_cir(fields, &selected_files, &self.csv_files);
-                    if !result.is_empty() {
-                        self.graph_data.push(result);
+                for (i, _) in pipelines.iter().enumerate() {
 
+                    if self.db_config.db_type.is(DatabaseType::SQLite) {
+                        let combined_query = self.csvqb_pipelines[_index][i].1.join(" ");
+                        let conn_path = self.db_config.database_path.get_path();
+                        let _ = sqlite_cir_adapter(combined_query, conn_path, self.graph_data.as_mut());
+
+                    } else if self.db_config.db_type.is(DatabaseType::CsvQB) {
+                        let result = csvqb_to_cir(
+                            &*self.csvqb_pipelines[_index][i].1,
+                            &selected_files,
+                            &self.csv_files,
+                        );
+                        if !result.is_empty() {
+                            self.graph_data.push(result);
+                        }
                     }
                 }
             }
             self.prev_session = self.current_session;
+
         }
 
     }
@@ -305,7 +320,7 @@ impl CharterCsvApp {
                                     ui.text_edit_singleline(&mut self.edit_ss_name);
                                     ui.horizontal(|ui| {
                                         if ui.button("OK").clicked() {
-                                            save_session(self.edit_ss_name.to_owned(), vec![], vec![], vec![]).expect("session save failed");
+                                            save_session(self.edit_ss_name.to_owned(), vec![], vec![], vec![], &self.query_mode).expect("session save failed");
                                             self.edit_ss_name.clear();
                                             self.show_ss_name_popup = false;
                                         }
@@ -350,7 +365,7 @@ impl CharterCsvApp {
                             }
                             let ssi = self.current_session as usize;
                             let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
-                            save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, selected_files).expect("session save failed");
+                            save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, selected_files, &self.query_mode).expect("session save failed");
                         }
                     });
                 } else {
@@ -401,14 +416,18 @@ impl CharterCsvApp {
                                                 .outer_margin(0.0)
                                                 .inner_margin(5.0)
                                                 .show(ui, |ui| {
-                                                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                                                    ui.with_layout(egui::Layout::top_down_justified(Align::LEFT), |ui| {
                                                         ui.add_space(3.0);
-                                                        ui.label(RichText::new(format!("name: {}", session.name)).color(Color32::BLACK));
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new(format!("name: {}", session.name)).color(Color32::BLACK));
+                                                            ui.add_space(ui.available_width() - 120.0); 
+                                                            ui.label(RichText::new(format!("working in {}", session.query_mode)).color(Color32::BLACK));
+                                                        });
                                                         ui.label(RichText::new(format!("files: {:?}", session.files.len())).color(Color32::BLACK));
                                                         ui.label(RichText::new(format!("pipelines: {:?}", session.pipelines.len())).color(Color32::BLACK));
 
                                                         if self.current_session != index as i8 {
-                                                            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                                            ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
                                                                 if ui.add_sized(
                                                                     Vec2::new(180.0, 20.0),
                                                                     Button::new("Load")
@@ -639,7 +658,7 @@ impl CharterCsvApp {
         next_screen
     }
 
-    fn create_chart_screen(&mut self, ctx: &Context) {
+    fn data_explorer_screen(&mut self, ctx: &Context) {
         let frame = Frame::default()
             .fill(Color32::from_rgb(193, 200, 208));
 
@@ -686,19 +705,27 @@ impl CharterCsvApp {
                             let selected_files = &self.multi_pipeline_tracker.keys().copied().collect::<Vec<usize>>();
                             for (root, indexes) in self.multi_pipeline_tracker.iter() {
                                 for (i, _) in indexes.iter().enumerate() {
-                                    if self.sql_mode {
-                                        let combined_query = self.csvqb_pipelines[*root][i].1.join(" ");
-                                        let conn_path = self.db_config.database_path.get_path();
-                                        let _ = sqlite_cir_adapter(combined_query, conn_path, self.graph_data.as_mut());
-
-                                    } else {
-                                        let result = csvqb_to_cir(
-                                            &*self.csvqb_pipelines[*root][i].1,
-                                            selected_files,
-                                            &self.csv_files,
-                                        );
-                                        if !result.is_empty() {
-                                            self.graph_data.push(result);
+                                    match self.query_mode {
+                                        DatabaseType::CsvQB => {
+                                            let result = csvqb_to_cir(
+                                                &*self.csvqb_pipelines[*root][i].1,
+                                                selected_files,
+                                                &self.csv_files,
+                                            );
+                                            if !result.is_empty() {
+                                                self.graph_data.push(result);
+                                            }
+                                        }
+                                        DatabaseType::SQLite => {
+                                            let combined_query = self.csvqb_pipelines[*root][i].1.join(" ");
+                                            let conn_path = self.db_config.database_path.get_path();
+                                            let _ = sqlite_cir_adapter(combined_query, conn_path, self.graph_data.as_mut());
+                                        }
+                                        DatabaseType::PostgreSQL => {
+                                            println!("coming soon")
+                                        }
+                                        DatabaseType::MongoDB => {
+                                            println!("coming soon")
                                         }
                                     }
                                 }
@@ -708,12 +735,20 @@ impl CharterCsvApp {
                         if ui.button("View charts").clicked() {
                             self.screen = Screen::ViewChart;
                         }
+                        
 
-                        if ui.button("SQL Mode").clicked() {
-                           if self.db_config.enabled {
-                               self.sql_mode = !self.sql_mode;
-                           }
-                        }
+                        ui.add_space(8.0);
+                        egui::ComboBox::from_label("Query Mode")
+                            .selected_text(format!("{:?}", self.query_mode))
+                            .show_ui(ui, |ui| {
+                                for db_type in &[DatabaseType::CsvQB, DatabaseType::SQLite, DatabaseType::PostgreSQL, DatabaseType::MongoDB] {
+                                    if ui.selectable_value(&mut self.query_mode, db_type.clone(), format!("{:?}", db_type)).clicked() {
+                                        self.query_mode = db_type.clone();
+                                        println!("Changed query mode to: {:?}", db_type);
+                                    }
+                                }
+                            });
+
                         ui.add_space(ui.available_width());
                     });
                 });
@@ -1317,6 +1352,7 @@ impl CharterCsvApp {
                                        //specific settings
                                    });
                                }
+                               _ => {}
                            }
 
                        }

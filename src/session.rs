@@ -1,9 +1,11 @@
 use std::fs::{self, File};
 use std::io::{self, Write, BufRead, BufReader};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::mpsc;
 use std::thread;
 use crate::charter_utilities::{csv_parser, CsvGrid};
+use crate::db_manager::DatabaseType;
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -11,6 +13,7 @@ pub struct Session {
     pub(crate) files: Vec<String>,
     pub(crate) pipelines: Vec<Vec<String>>,
     pub(crate) selected_files: Vec<usize>,
+    pub query_mode: DatabaseType,
 }
 
 impl Session {
@@ -20,6 +23,7 @@ impl Session {
             files,
             pipelines,
             selected_files: vec![],
+            query_mode: DatabaseType::CsvQB,
         }
     }
 
@@ -44,7 +48,13 @@ impl Session {
         csvqb_pipelines
     }
 }
-pub fn save_session(session_name: String, csv_files: Vec<String>, pipelines: Vec<String>, selected_files: Vec<usize>) -> io::Result<()> {
+pub fn save_session(
+    session_name: String,
+    csv_files: Vec<String>,
+    pipelines: Vec<String>,
+    selected_files: Vec<usize>,
+    query_mode: &DatabaseType
+) -> io::Result<()> {
     let sessions_dir = Path::new("C:/source/Charter_CSV/src/sessions");
     if !sessions_dir.exists() {
         fs::create_dir_all(sessions_dir)?;
@@ -70,6 +80,10 @@ pub fn save_session(session_name: String, csv_files: Vec<String>, pipelines: Vec
         writeln!(file, "{}", index)?;
     }
 
+    writeln!(file)?;
+
+    writeln!(file, "{}", query_mode)?;
+
     Ok(())
 }
 pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
@@ -93,7 +107,7 @@ pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
                 let mut csvqb_pipeline = vec![];
                 let mut csv_files = vec![];
                 let mut selected_files = vec![];
-
+                let mut query_mode = DatabaseType::CsvQB;
                 let mut current_section = 0;
                 for line in reader.lines() {
                     let line = line?;
@@ -103,10 +117,15 @@ pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
                     }
                     match current_section {
                         0 => csv_files.push(line),
-                        1 => csvqb_pipeline.push(line.trim_start().split_whitespace().map(|s| s.to_string()).collect()),
+                        1 => csvqb_pipeline.push(line.trim_start().trim_start_matches(|c: char| c.is_numeric()).split_whitespace().map(|s| s.to_string()).collect()),
                         2 => {
                             if let Ok(index) = line.parse::<usize>() {
                                 selected_files.push(index);
+                            }
+                        }
+                        3 => {
+                            if let Ok(db_type) = DatabaseType::from_str(&line) {
+                                query_mode = db_type;
                             }
                         }
                         _ => break,
@@ -118,6 +137,7 @@ pub fn load_sessions_from_directory() -> io::Result<Vec<Session>> {
                     files: csv_files,
                     pipelines: csvqb_pipeline,
                     selected_files,
+                    query_mode 
                 });
             }
         }

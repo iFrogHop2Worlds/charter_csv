@@ -1,6 +1,8 @@
 use rayon::prelude::*;
 use std::error::Error;
+use std::fmt::Display;
 use std::path::PathBuf;
+use std::str::FromStr;
 use itertools::Itertools;
 use rusqlite::Connection;
 use crate::charter_utilities::{get_default_db_path, CsvGrid};
@@ -10,6 +12,39 @@ pub enum DatabaseType {
     SQLite,
     PostgreSQL,
     MongoDB,
+    CsvQB,
+}
+
+impl DatabaseType {
+    pub fn is(&self, other: DatabaseType) -> bool {
+        self == &other
+    }
+}
+
+impl Display for DatabaseType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            DatabaseType::SQLite => "SQLite".to_string(),
+            DatabaseType::PostgreSQL => "PostgreSQL".to_string(),
+            DatabaseType::MongoDB => "MongoDB".to_string(),
+            DatabaseType::CsvQB => "CsvQB".to_string(),
+        };
+        write!(f, "{}", str)
+    }
+}
+
+impl FromStr for DatabaseType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "SQLite" => Ok(DatabaseType::SQLite),
+            "PostgreSQL" => Ok(DatabaseType::PostgreSQL),
+            "MongoDB" => Ok(DatabaseType::MongoDB),
+            "CsvQB" => Ok(DatabaseType::CsvQB),
+            _ => Err(format!("Invalid database type: {}", s)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,7 +72,7 @@ pub struct DatabaseConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             db_type: DatabaseType::SQLite,
             connection_string: String::new(),
             database_path: DatabaseSource::Default,
@@ -70,6 +105,7 @@ impl DbManager {
             DatabaseType::MongoDB => {
                 // Future
             }
+            _ => {}
         }
         Ok(())
     }
