@@ -1,11 +1,14 @@
 use rayon::prelude::*;
 use std::error::Error;
+use std::io::ErrorKind;
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
 use itertools::Itertools;
-use rusqlite::Connection;
-use crate::charter_utilities::{get_default_db_path, CsvGrid};
+use rusqlite::{params, Connection};
+use serde_json::Value;
+use crate::charter_utilities::{csv_parser, get_default_db_path, CsvGrid};
+use crate::session::{Session, SessionSummary};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DatabaseType {
@@ -108,6 +111,158 @@ impl DbManager {
             _ => {}
         }
         Ok(())
+    }
+
+    pub fn save_session_to_database(mut conn: Connection, sessions: Vec<Session>) -> Result<(), Box<dyn Error>> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions (
+            name TEXT PRIMARY KEY,
+            files TEXT,
+            pipelines TEXT,
+            selected_files TEXT,
+            query_mode TEXT
+        )",
+            [],
+        )?;
+
+        let transaction = conn.transaction()?;
+
+        for session in sessions {
+            let files_json = serde_json::to_string(&session.files)?;
+            let pipelines_json = serde_json::to_string(&session.pipelines)?;
+            let selected_files_json = serde_json::to_string(&session.selected_files)?;
+            let query_mode_str = format!("{:?}", session.query_mode);
+
+            transaction.execute(
+                "INSERT OR REPLACE INTO sessions (name, files, pipelines, selected_files, query_mode)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                session.name,
+                files_json,
+                pipelines_json,
+                selected_files_json,
+                query_mode_str,
+            ],
+            )?;
+        }
+
+        transaction.commit()?;
+
+        Ok(())
+    }
+
+    pub fn retrieve_session_list(conn: &Connection) -> Result<Vec<SessionSummary>, Box<dyn Error>> {
+        let mut stmt = conn.prepare(
+            "SELECT name, files, pipelines, query_mode FROM sessions"
+        ).or_else(|_| {
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS sessions (
+                    name TEXT PRIMARY KEY,
+                    files TEXT,
+                    pipelines TEXT,
+                    selected_files TEXT,
+                    query_mode TEXT
+                )",
+                [],
+            )?;
+            conn.prepare("SELECT name, files, pipelines, query_mode FROM sessions")
+        })?;
+
+        let session_iter = stmt.query_map([], |row| {
+            let name: String = row.get(0)?;
+            let files_json: String = row.get(1)?;
+            let pipelines_json: String = row.get(2)?;
+            let query_mode: String = row.get(3)?;
+
+            let files: Value = serde_json::from_str(&files_json)
+                .unwrap_or(Value::Array(vec![]));
+            let pipelines: Value = serde_json::from_str(&pipelines_json)
+                .unwrap_or(Value::Array(vec![]));
+
+            let file_count = if let Value::Array(files_arr) = files {
+                files_arr.len()
+            } else {
+                0
+            };
+
+            let pipeline_count = if let Value::Array(pipelines_arr) = pipelines {
+                pipelines_arr.len()
+            } else {
+                0
+            };
+
+            Ok(SessionSummary {
+                name,
+                file_count,
+                pipeline_count,
+                query_mode,
+            })
+        })?;
+
+        let mut sessions = Vec::new();
+        for session in session_iter {
+            sessions.push(session?);
+        }
+
+        Ok(sessions)
+    }
+
+    pub fn load_sessions_from_db(conn: &Connection) -> Result<Vec<Session>, Box<dyn Error>> {
+        let mut stmt = conn.prepare(
+            "SELECT name, files, pipelines, selected_files, query_mode FROM sessions"
+        )?;
+
+        let mut sessions = Vec::new();
+
+        let rows = stmt.query_map([], |row| {
+            let name: String = row.get(0)?;
+            let files_json: String = row.get(1)?;
+            let pipelines_json: String = row.get(2)?;
+            let selected_files_json: String = row.get(3)?;
+            let query_mode_str: String = row.get(4)?;
+
+            let files: Vec<String> = serde_json::from_str(&files_json)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e)
+                ))?;
+
+            let pipelines: Vec<Vec<String>> = serde_json::from_str(&pipelines_json)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e)
+                ))?;
+
+            let selected_files: Vec<usize> = serde_json::from_str(&selected_files_json)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e)
+                ))?;
+
+            let query_mode = DatabaseType::from_str(&query_mode_str)
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(std::io::Error::new(ErrorKind::InvalidData, "Empty CSV data"))
+                ))?;
+
+            Ok(Session {
+                name,
+                files,
+                pipelines,
+                selected_files,
+                query_mode,
+            })
+        })?;
+
+        for row in rows {
+            sessions.push(row?);
+        }
+
+        Ok(sessions)
     }
 
     pub fn import_all_csvs(conn: &mut Connection, csv_files: &Vec<(String, CsvGrid)>) -> Result<(), Box<dyn Error>> {
@@ -216,6 +371,34 @@ impl DbManager {
         }
 
         Ok(())
+    }
+
+    pub fn load_file_from_db(conn: &mut Connection, session_name: &str)
+        -> Result<Vec<(String, CsvGrid)>, Box<dyn Error>>
+    {
+
+        let mut stmt = conn.prepare(
+            "SELECT file_path, file_content FROM files
+         INNER JOIN sessions ON files.session_id = sessions.id
+         WHERE sessions.name = ?"
+        )?;
+
+        let mut results = Vec::new();
+
+        let rows = stmt.query_map([session_name], |row| {
+            let file_path: String = row.get(0)?;
+            let content: String = row.get(1)?;
+            Ok((file_path, content))
+        })?;
+
+        for row in rows {
+            if let Ok((file_path, content)) = row {
+                let grid: CsvGrid = csv_parser(&content).expect("Failed to parse CSV content");
+                results.push((file_path, grid));
+            }
+        }
+
+        Ok(results)
     }
 
 }

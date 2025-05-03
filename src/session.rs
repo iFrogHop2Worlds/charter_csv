@@ -13,7 +13,15 @@ pub struct Session {
     pub(crate) files: Vec<String>,
     pub(crate) pipelines: Vec<Vec<String>>,
     pub(crate) selected_files: Vec<usize>,
-    pub query_mode: DatabaseType,
+    pub(crate) query_mode: DatabaseType,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionSummary {
+    pub(crate) name: String,
+    pub(crate) file_count: usize,
+    pub(crate) pipeline_count: usize,
+    pub(crate) query_mode: String,
 }
 
 impl Session {

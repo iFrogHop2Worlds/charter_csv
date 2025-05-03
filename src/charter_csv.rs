@@ -1,19 +1,18 @@
-use eframe::App;
-use egui::{Ui, Button, CentralPanel, Color32, Context, IconData, Image, RichText, ScrollArea, TextEdit, TextureHandle, Vec2, Window, Frame, Margin, Id, FontId, Order, Stroke, Align};
-use crate::charter_utilities::{csv_parser, grid2csv, CsvGrid, save_window_as_png, check_for_screenshot, DraggableLabel, GridLayout, grid_search, SearchResult, render_db_stats, cir_parser};
-use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
+use crate::charter_utilities::{check_for_screenshot, cir_parser, csv_parser, grid2csv, grid_search, render_db_stats, save_window_as_png, CsvGrid, DraggableLabel, GridLayout, SearchResult};
+use crate::cir_adapters::sqlite_cir_adapter;
 use crate::csvqb::{csvqb_to_cir, CIR};
-pub use std::thread;
+use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager, };
+use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
+use eframe::App;
+use egui::{Align, Button, CentralPanel, Color32, Context, FontId, Frame, IconData, Id, Image, Margin, Order, RichText, ScrollArea, Stroke, TextEdit, TextureHandle, Ui, Vec2, Window};
+use image::ImageReader;
+use itertools::Itertools;
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
-use image::{ImageReader};
-use std::collections::HashMap;
-use std::str::FromStr;
+pub use std::thread;
 use std::time::Instant;
-use itertools::Itertools;
-use crate::cir_adapters::sqlite_cir_adapter;
-use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager};
 
 pub struct CharterCsvApp {
     db_manager: Option<DbManager>,
@@ -124,8 +123,16 @@ impl Default for CharterCsvApp {
 impl App for CharterCsvApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         check_for_screenshot(ctx);
+
+        // I want to optimize how we hold files in memory, we should drop a file out of memory once it is loaded into our db
+        // we could choose to load it back into memory if we want to work with it in csvqb? Could we flag items to auto load into memory?
         if let Ok((path, grid)) = self.file_receiver.try_recv() {
-            self.csv_files.push((path, grid));
+            self.csv_files.push((path.clone(), grid.clone())); // i def do not like this we should have a filepath in our db so we can load file into ram that way?
+            if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                if let Err(err) = DbManager::import_all_csvs(&mut conn, &vec![(path, grid)]) {
+                    println!("err {}", err)
+                }
+            }
         }
 
         let screen = std::mem::replace(&mut self.screen, Screen::Main);
@@ -171,15 +178,20 @@ impl App for CharterCsvApp {
             }
         }
 
-        self.sessions = load_sessions_from_directory().expect("Failed to restore sessions");
+        if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+            self.sessions = DbManager::load_sessions_from_db(&conn).expect("Failed to load sessions");
+        }
+
+        // deprecated local text file based sessions
+        //self.sessions = load_sessions_from_directory().expect("Failed to restore sessions");
 
         if self.current_session != self.prev_session && !self.sessions.is_empty() {
-            if self.current_session == -1 {
-                let receiver = reconstruct_session(self.sessions[0].clone());
-                while let Ok((file_path, grid )) = receiver.recv() {
-                    self.csv_files.push((file_path, grid));
-                }
+
+            let receiver = reconstruct_session(self.sessions[0].clone());
+            while let Ok((file_path, grid )) = receiver.recv() {
+                self.csv_files.push((file_path, grid));
             }
+
 
             let ssi = self.current_session as usize;
             if ssi >= 0 && ssi < self.sessions.len() {
@@ -187,10 +199,16 @@ impl App for CharterCsvApp {
                     self.multi_pipeline_tracker.insert(*file, vec![*file]);
                 }
                 let query_mode = self.sessions[ssi].query_mode.clone();
+                // let pipelines = self.sessions[ssi].pipelines.clone();
+                // let files = self.sessions[ssi].files.clone();
+                // let selected_files = self.sessions[ssi].selected_files.clone();
+
                 self.query_mode = query_mode;
 
             }
             let selected_files: Vec<usize> = self.multi_pipeline_tracker.keys().copied().sorted().collect();
+
+            // we run session queries here to set graph data
             for (_index, pipelines) in self.csvqb_pipelines.iter().enumerate() {
                 for (i, _) in pipelines.iter().enumerate() {
 
@@ -211,10 +229,15 @@ impl App for CharterCsvApp {
                     }
                 }
             }
+
             self.prev_session = self.current_session;
 
+            if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                if let Err(err) = DbManager::import_all_csvs(&mut conn, &self.csv_files) {
+                    println!("err {}", err)
+                }
+            }
         }
-
     }
 }
 impl CharterCsvApp {
@@ -311,6 +334,18 @@ impl CharterCsvApp {
                         if ui.button("View Charts").clicked() {
                             self.screen = Screen::ViewChart;
                         }
+                        
+                        if ui.button("print_state").clicked() {
+                            println!("CSV Files: {:?}", self.csv_files);
+                            println!("\nCSVQB Pipelines: {:?}", self.csvqb_pipelines);
+                            println!("\nGraph Data: {:?}", self.graph_data);
+                            println!("\nMulti Pipeline Tracker: {:?}", self.multi_pipeline_tracker);
+                            println!("\nSessions: {:?}", self.sessions);
+                            println!("\nCurrent Session: {:?}", self.current_session);
+                            println!("\nPrevious Session: {:?}", self.prev_session);
+                            println!("\nQuery Mode: {:?}", self.query_mode);
+                            println!("\nShow SS Name Popup: {:?}", self.show_ss_name_popup);
+                        }
 
                         if self.show_ss_name_popup {
                             Window::new("Enter Session Name")
@@ -320,7 +355,20 @@ impl CharterCsvApp {
                                     ui.text_edit_singleline(&mut self.edit_ss_name);
                                     ui.horizontal(|ui| {
                                         if ui.button("OK").clicked() {
-                                            save_session(self.edit_ss_name.to_owned(), vec![], vec![], vec![], &self.query_mode).expect("session save failed");
+                                            if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                                                let session = Session {
+                                                    name: self.edit_ss_name.to_owned(),
+                                                    files: vec![],
+                                                    pipelines: vec![],
+                                                    selected_files: vec![],
+                                                    query_mode: self.query_mode.clone(),
+
+                                                };
+                                                if let Err(err) = DbManager::save_session_to_database( conn, vec![session]) {
+                                                    println!("{}", format!("Error saving session to sql lite db: {}", err));
+                                                }
+                                            }
+                                            //save_session(self.edit_ss_name.to_owned(), vec![], vec![], vec![], &self.query_mode).expect("session save failed");
                                             self.edit_ss_name.clear();
                                             self.show_ss_name_popup = false;
                                         }
@@ -341,58 +389,72 @@ impl CharterCsvApp {
             });
 
             ui.vertical_centered(|ui| {
-                if !self.sessions.is_empty() {
-                    ui.add_space(100.0);
-                    ui.heading(RichText::new("sessions").color(Color32::BLACK));
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(ui.available_width() / 2.0 - 83.0);
+                if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                    if !self.sessions.is_empty() {
+                        ui.add_space(100.0);
+                        ui.heading(RichText::new("sessions").color(Color32::BLACK));
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(ui.available_width() / 2.0 - 83.0);
+                            if ui.button("New Session").clicked() {
+                                self.show_ss_name_popup = true;
+                            }
+
+                            if ui.button("Save Current").clicked() {
+                                let mut file_paths: Vec<String> = vec![];
+                                let mut pipelines: Vec<String> = vec![];
+                                for (path, _) in self.csv_files.iter() {
+                                    file_paths.push(path.to_string());
+                                }
+                                println!("{:?}", file_paths);
+                                for (_index, pipeline) in self.csvqb_pipelines.iter().enumerate() {
+                                    for (index, query_string) in pipeline.iter() {
+                                        let pipeline_str = index.to_string() + &*" ".to_string() + &*query_string.join(" ");
+                                        pipelines.push(pipeline_str);
+                                    }
+                                }
+                                let ssi = self.current_session as usize;
+                                let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
+                                //save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, selected_files, &self.query_mode).expect("session save failed");
+                                let session = Session {
+                                    name: self.sessions[ssi].name.to_string(),
+                                    files: file_paths,
+                                    pipelines: vec![pipelines],
+                                    selected_files,
+                                    query_mode: self.query_mode.clone(),
+
+                                };
+                                if let Err(err) = DbManager::save_session_to_database( conn, vec![session]) {
+                                    ui.label(format!("Error saving session to sql lite db: {}", err));
+                                }
+                            }
+                        });
+                    } else {
+                        ui.set_height(-160.0);
+                        ui.add_space(20.0);
+                        ui.add(
+                            Image::new(&*texture)
+                                .max_width(200.0)
+                        );
+                        ui.add_space(20.0);
+                        ui.heading(RichText::new("Welcome to Charter CSV!").color(Color32::BLACK));
+                        ui.add_space(40.0);
+                        ui.label(RichText::new("Create a new session to get started.").color(Color32::BLACK));
+                        ui.add_space(10.0);
                         if ui.button("New Session").clicked() {
                             self.show_ss_name_popup = true;
                         }
-
-                        if ui.button("Save Current").clicked() {
-                            let mut file_paths: Vec<String> = vec![];
-                            let mut pipelines: Vec<String> = vec![];
-                            for (path, _) in self.csv_files.iter() {
-                                file_paths.push(path.to_string());
-                            }
-                            for (_index, pipeline) in self.csvqb_pipelines.iter().enumerate() {
-                                for (index, query_string) in pipeline.iter() {
-                                    let pipeline_str = index.to_string() + &*" ".to_string() + &*query_string.join(" ");
-                                    pipelines.push(pipeline_str);
-                                }
-                            }
-                            let ssi = self.current_session as usize;
-                            let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
-                            save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, selected_files, &self.query_mode).expect("session save failed");
-                        }
-                    });
-                } else {
-                    ui.set_height(-160.0);
-                    ui.add_space(20.0);
-                    ui.add(
-                        Image::new(&*texture)
-                            .max_width(200.0)
-                    );
-                    ui.add_space(20.0);
-                    ui.heading(RichText::new("Welcome to Charter CSV!").color(Color32::BLACK));
-                    ui.add_space(40.0);
-                    ui.label(RichText::new("Create a new session to get started.").color(Color32::BLACK));
-                    ui.add_space(10.0);
-                    if ui.button("New Session").clicked() {
-                        self.show_ss_name_popup = true;
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("You can use the app without a session but it is best to create a session to work in.").color(Color32::BLACK));
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("You can switch between sessions or save it for later.").color(Color32::BLACK));
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("The Data Explorer is where you can quickly search and compare the data in your files.").color(Color32::BLACK));
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("You can create new csv files by clicking New File or you can edit files in the View Files screen.").color(Color32::BLACK));
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("Have fun exploring the depths of your data!.").color(Color32::BLACK));
                     }
-                    ui.add_space(20.0);
-                    ui.label(RichText::new("You can use the app without a session but it is best to create a session to work in.").color(Color32::BLACK));
-                    ui.add_space(20.0);
-                    ui.label(RichText::new("You can switch between sessions or save it for later.").color(Color32::BLACK));
-                    ui.add_space(20.0);
-                    ui.label(RichText::new("The Data Explorer is where you can quickly search and compare the data in your files.").color(Color32::BLACK));
-                    ui.add_space(20.0);
-                    ui.label(RichText::new("You can create new csv files by clicking New File or you can edit files in the View Files screen.").color(Color32::BLACK));
-                    ui.add_space(20.0);
-                    ui.label(RichText::new("Have fun exploring the depths of your data!.").color(Color32::BLACK));
                 }
 
                 ui.add_space(30.0);
@@ -400,65 +462,73 @@ impl CharterCsvApp {
                     ScrollArea::vertical()
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            for (index, session) in self.sessions.iter().enumerate() {
-                                let active_session = if self.current_session == index as i8 {
-                                    Color32::from_rgb(0, 196, 218)
-                                } else {
-                                    Color32::TRANSPARENT
-                                };
-                                ui.push_id(index, |ui| {
-                                    ui.group(|ui| {
-                                        let _ = ui.group(|ui| {
-                                            ui.set_width(ui.available_width() / 1.8);
-                                            ui.set_height(30.0);
-                                            Frame::default()
-                                                .fill(active_session)
-                                                .outer_margin(0.0)
-                                                .inner_margin(5.0)
-                                                .show(ui, |ui| {
-                                                    ui.with_layout(egui::Layout::top_down_justified(Align::LEFT), |ui| {
-                                                        ui.add_space(3.0);
-                                                        ui.horizontal(|ui| {
-                                                            ui.label(RichText::new(format!("name: {}", session.name)).color(Color32::BLACK));
-                                                            ui.add_space(ui.available_width() - 120.0); 
-                                                            ui.label(RichText::new(format!("working in {}", session.query_mode)).color(Color32::BLACK));
-                                                        });
-                                                        ui.label(RichText::new(format!("files: {:?}", session.files.len())).color(Color32::BLACK));
-                                                        ui.label(RichText::new(format!("pipelines: {:?}", session.pipelines.len())).color(Color32::BLACK));
+                            if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                                let sessions = DbManager::retrieve_session_list(&conn).expect("Failed to retrieve session list");
+                                for (index, session) in sessions.iter().enumerate() {
 
-                                                        if self.current_session != index as i8 {
-                                                            ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
-                                                                if ui.add_sized(
-                                                                    Vec2::new(180.0, 20.0),
-                                                                    Button::new("Load")
-                                                                        .corner_radius(12.0)
-                                                                ).clicked() {
-                                                                    self.current_session = index as i8;
-                                                                    self.multi_pipeline_tracker.clear();
-                                                                    self.csv_files.clear();
-                                                                    self.csvqb_pipelines.clear();
-                                                                    self.graph_data.clear();
-                                                                    let receiver = reconstruct_session(self.sessions[index].clone());
-                                                                    while let Ok((file_path, grid)) = receiver.recv() {
-                                                                        self.csv_files.push((file_path, grid));
-                                                                    }
-                                                                    for (_index, pipeline) in self.sessions[index].pipelines.iter().enumerate() {
-                                                                        if pipeline.is_empty() {
-                                                                            println!("Warning: Empty pipeline found, skipping...");
-                                                                            continue;
-                                                                        }
-                                                                        self.csvqb_pipelines.push(vec![(_index, pipeline.to_owned())]);
-                                                                    }
-                                                                }
+                                    let active_session = if self.current_session == index as i8 {
+                                        Color32::from_rgb(0, 196, 218)
+                                    } else {
+                                        Color32::TRANSPARENT
+                                    };
+                                    ui.push_id(index, |ui| {
+                                        ui.group(|ui| {
+                                            let _ = ui.group(|ui| {
+                                                ui.set_width(ui.available_width() / 1.8);
+                                                ui.set_height(30.0);
+                                                Frame::default()
+                                                    .fill(active_session)
+                                                    .outer_margin(0.0)
+                                                    .inner_margin(5.0)
+                                                    .show(ui, |ui| {
+                                                        ui.with_layout(egui::Layout::top_down_justified(Align::LEFT), |ui| {
+                                                            ui.add_space(3.0);
+                                                            ui.horizontal(|ui| {
+                                                                ui.label(RichText::new(format!("name: {}", session.name)).color(Color32::BLACK));
+                                                                ui.add_space(ui.available_width() - 120.0);
+                                                                ui.label(RichText::new(format!("working in {}", session.query_mode)).color(Color32::BLACK));
                                                             });
-                                                        }
+                                                            ui.label(RichText::new(format!("files: {:?}", session.file_count)).color(Color32::BLACK));
+                                                            ui.label(RichText::new(format!("pipelines: {:?}", session.pipeline_count)).color(Color32::BLACK));
+
+                                                            if self.current_session != index as i8 {
+                                                                ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
+                                                                    if ui.add_sized(
+                                                                        Vec2::new(180.0, 20.0),
+                                                                        Button::new("Load")
+                                                                            .corner_radius(12.0)
+                                                                    ).clicked() {
+                                                                        self.current_session = index as i8;
+                                                                        self.multi_pipeline_tracker.clear();
+                                                                        self.csv_files.clear();
+                                                                        self.csvqb_pipelines.clear();
+                                                                        self.graph_data.clear();
+
+                                                                        let receiver = reconstruct_session(self.sessions[index].clone());
+
+                                                                        while let Ok((file_path, grid)) = receiver.recv() {
+                                                                            self.csv_files.push((file_path, grid));
+                                                                        }
+                                                                        for (_index, pipeline) in self.sessions[index].pipelines.iter().enumerate() {
+                                                                            if pipeline.is_empty() {
+                                                                                println!("Warning: Empty pipeline found, skipping...");
+                                                                                continue;
+                                                                            }
+                                                                            self.csvqb_pipelines.push(vec![(_index, pipeline.to_owned())]);
+                                                                        }
+                                                                    }
+                                                                });
+                                                            }
+                                                        });
                                                     });
-                                                });
+                                            });
                                         });
                                     });
-                                });
+                                }
                             }
+
                         });
+
                 });
             });
         });
@@ -491,6 +561,7 @@ impl CharterCsvApp {
                                     }
                                 });
                             }
+
                         }
                         ui.add_space(ui.available_width());
                     })
@@ -499,7 +570,7 @@ impl CharterCsvApp {
             ui.add_space(21.0);
 
             let desired_width = ui.available_width() / 3.0;
-            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
                 for (index, file) in self.csv_files.iter().enumerate() {
                     let file_name = file.0.split("\\").last().unwrap_or("No file name");
                     ui.push_id(index, |ui| {
@@ -511,10 +582,27 @@ impl CharterCsvApp {
                             ui.set_max_width(desired_width);
                             ui.horizontal(|ui| {
                                 ui.label(file_name);
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button("remove").clicked() {
+                                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.button("unload").clicked() {
                                         files_to_remove = Some(index);
                                     }
+
+                                    if ui.button("Load from DB").clicked() {
+                                        let sender = self.file_sender.clone();
+                                        let db_path = self.db_config.database_path.get_path().to_owned();
+                                        let session_name = self.sessions[self.current_session as usize].name.clone();
+
+                                        thread::spawn(move || {
+                                            if let Ok(mut conn) = rusqlite::Connection::open(&db_path) {
+                                                if let Ok(files) = DbManager::load_file_from_db(&mut conn, &session_name) {
+                                                    for (path, grid) in files {
+                                                        let _ = sender.send((path, grid));
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
+
                                     if ui.button("edit").clicked() {
                                         next_screen = Some(Screen::EditCsv {
                                             index,
@@ -1327,11 +1415,8 @@ impl CharterCsvApp {
                                            }
                                        }
 
-                                       if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                                       if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
 
-                                           if let Err(err) = DbManager::import_all_csvs(&mut conn, &self.csv_files) {
-                                               println!("err {}", err)
-                                           }
 
                                            if let Err(err) = render_db_stats(ui, &conn) {
                                                ui.label(format!("Error loading database stats: {}", err));
