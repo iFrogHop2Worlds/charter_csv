@@ -1,16 +1,15 @@
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
-use crate::charter_utilities::{check_for_screenshot, cir_parser, combine_grids, csv_parser, grid2csv, grid_search, render_db_stats, save_window_as_png, CsvGrid, DraggableLabel, GridLayout, SearchResult};
+use crate::charter_utilities::{check_for_screenshot, cir_parser, grid2csv, grid_search, render_db_stats, save_window_as_png, CsvGrid, DraggableLabel, GridLayout, SearchResult};
 use crate::cir_adapters::sqlite_cir_adapter;
 use crate::csvqb::{csvqb_to_cir, CIR};
 use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager, };
-use crate::session::{load_sessions_from_directory, reconstruct_session, save_session, Session};
+use crate::session::{reconstruct_session, Session};
 use eframe::App;
 use egui::{Align, Button, CentralPanel, Color32, Context, FontId, Frame, IconData, Id, Image, Margin, Order, RichText, ScrollArea, Stroke, TextEdit, TextureHandle, Ui, Vec2, Window};
 use image::ImageReader;
 use itertools::Itertools;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 pub use std::thread;
@@ -147,11 +146,11 @@ impl App for CharterCsvApp {
             }
             Screen::ViewCsv => {
                 self.screen = screen;
-                self.show_csv_list(ctx)
+                self.file_manager_screen(ctx)
             }
             Screen::CreateCsv { content } => {
                 let mut content_owned = content;
-                let next_screen = self.show_csv_editor(ctx, &mut content_owned, None);
+                let next_screen = self.csv_editor_screen(ctx, &mut content_owned, None);
                 self.screen = match next_screen {
                     Some(screen) => screen,
                     None => Screen::CreateCsv { content: content_owned },
@@ -159,7 +158,7 @@ impl App for CharterCsvApp {
             }
             Screen::EditCsv { index, content } => {
                 let mut content_owned = content;
-                let next_screen = self.show_csv_editor(ctx, &mut content_owned, Some(index));
+                let next_screen = self.csv_editor_screen(ctx, &mut content_owned, Some(index));
                 self.screen = match next_screen {
                     Some(screen) => screen,
                     None => Screen::EditCsv {
@@ -174,11 +173,11 @@ impl App for CharterCsvApp {
             }
             Screen::ViewChart => {
                 self.screen = screen;
-                self.show_chart_screen(ctx)
+                self.chart_display_screen(ctx)
             }
             Screen::Settings => {
                 self.screen = screen;
-                self.render_settings(ctx)
+                self.settings_screen(ctx)
             }
         }
 
@@ -325,7 +324,7 @@ impl CharterCsvApp {
                             };
                         }
 
-                        if ui.button("View Files").clicked() {
+                        if ui.button("File Manager").clicked() {
                             self.screen = Screen::ViewCsv;
                         }
 
@@ -453,7 +452,7 @@ impl CharterCsvApp {
                         ui.add_space(20.0);
                         ui.label(RichText::new("The Data Explorer is where you can quickly search and compare the data in your files.").color(Color32::BLACK));
                         ui.add_space(20.0);
-                        ui.label(RichText::new("You can create new csv files by clicking New File or you can edit files in the View Files screen.").color(Color32::BLACK));
+                        ui.label(RichText::new("You can create new csv files by clicking New File or you can edit files in the File Manager screen.").color(Color32::BLACK));
                         ui.add_space(20.0);
                         ui.label(RichText::new("Have fun exploring the depths of your data!.").color(Color32::BLACK));
                     }
@@ -536,7 +535,7 @@ impl CharterCsvApp {
         });
     }
 
-    fn show_csv_list(&mut self, ctx: &Context) {
+    fn file_manager_screen(&mut self, ctx: &Context) {
         let frame = Frame::default()
             .fill(Color32::from_rgb(193, 200, 208));
 
@@ -567,8 +566,8 @@ impl CharterCsvApp {
 
             let desired_width = ui.available_width() / 3.0;
             ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
-                for (index, file) in self.csv_files.iter().enumerate() {
-                    let file_name = file.0.split("\\").last().unwrap_or("No file name");
+                for (index, file) in self.sessions[self.current_session].files.iter().enumerate() {
+                    let file_name = file.split("\\").last().unwrap_or("No file name");
                     ui.push_id(index, |ui| {
                         let total_width = ui.available_width();
                         let padding = (total_width - desired_width) / 2.0;
@@ -601,7 +600,7 @@ impl CharterCsvApp {
                                     if ui.button("edit").clicked() {
                                         next_screen = Some(Screen::EditCsv {
                                             index,
-                                            content: file.clone(),
+                                            content: self.csv_files[index].clone(),
                                         });
                                     }
                                 });
@@ -620,7 +619,7 @@ impl CharterCsvApp {
         }
     }
 
-    fn show_csv_editor(
+    fn csv_editor_screen(
         &mut self,
         ctx: &Context,
         content: &mut (String, CsvGrid),
@@ -758,7 +757,7 @@ impl CharterCsvApp {
                         egui::ComboBox::from_label("Select File")
                             .show_ui(ui, |ui| {
                                 for (index, file) in self.csv_files.iter().enumerate() {
-                                    let file_name = &file.0;
+                                    let file_name = file.0.split('\\').last().and_then(|f| f.split('.').next()).unwrap_or("No file name");
                                     let mut selected = self.multi_pipeline_tracker.contains_key(&index);
 
                                     if ui.checkbox(&mut selected, file_name).clicked() {
@@ -1166,7 +1165,7 @@ impl CharterCsvApp {
         });
     }
 
-    fn show_chart_screen(&mut self, ctx: &Context) {
+    fn chart_display_screen(&mut self, ctx: &Context) {
         let frame = Frame::default()
             .fill(Color32::from_rgb(193, 200, 208));
 
@@ -1315,7 +1314,7 @@ impl CharterCsvApp {
         }
     }
 
-    fn render_settings(&mut self, ctx: &Context) {
+    fn settings_screen(&mut self, ctx: &Context) {
         let frame = Frame::default()
             .fill(Color32::from_rgb(193, 200, 208));
 

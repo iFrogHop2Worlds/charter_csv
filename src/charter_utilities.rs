@@ -485,6 +485,13 @@ impl GridLayout {
     }
 
     pub(crate) fn show(&mut self, ui: &mut egui::Ui, grid: &mut Vec<Vec<String>>) {
+        if grid.is_empty() { return; }
+        if self.col_widths.len() < grid[0].len() {
+            self.col_widths.resize(grid[0].len(), self.col_widths[0]);
+        }
+        if self.row_heights.len() < grid.len() {
+            self.row_heights.resize(grid.len(), self.row_heights[0]);
+        }
         let target_scroll = ui.memory(|mem| mem.data.get_temp::<Vec2>(Id::from("target_scroll")));
 
         let mut scroll = ScrollArea::both()
@@ -527,7 +534,8 @@ impl GridLayout {
             }
 
             let start_col = (viewport.min.x / self.col_widths[0]).floor().max(0.0) as usize;
-            let visible_cols = (viewport.width() / self.col_widths[0]).ceil() as usize + 1;
+            let visible_cols = ((viewport.width() / self.col_widths[0]).ceil() as usize + 1)
+                .min(self.col_widths.len().saturating_sub(start_col));
             let end_row = (start_row + visible_rows).min(grid.len().saturating_sub(1));
             let end_col = (start_col + visible_cols).min(grid[0].len().saturating_sub(1));
 
@@ -567,7 +575,7 @@ impl GridLayout {
                         );
                         ui.painter().rect_stroke(response.rect, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Outside);
 
-                        if col_idx < end_col {
+                        if col_idx < end_col.saturating_sub(1) && col_idx < self.col_widths.len().saturating_sub(1) {
                             let resizer_width = 6.0;
                             let resizer_rect = Rect::from_min_size(
                                 response.rect.right_top() + Vec2::new(-resizer_width/2.0, 0.0),
@@ -588,7 +596,12 @@ impl GridLayout {
 
                     if row_idx < end_row - 1 {
                         let resizer_height = 6.0;
-                        let row_width = self.col_widths.iter().skip(start_col).take(end_col - start_col).sum::<f32>();
+                        let safe_end_col = end_col.min(self.col_widths.len());
+                        let safe_start_col = start_col.min(safe_end_col);
+                        let row_width = self.col_widths.iter()
+                            .skip(safe_start_col)
+                            .take((safe_end_col - safe_start_col).max(0))
+                            .sum::<f32>();
                         let resizer_rect = Rect::from_min_size(
                             ui.min_rect().min + Vec2::new(left_offset, self.row_heights[row_idx] - resizer_height/2.0),
                             Vec2::new(row_width, resizer_height)
@@ -733,7 +746,7 @@ pub fn render_db_stats(ui: &mut egui::Ui, conn: &rusqlite::Connection) -> Result
         ui.label(format!("• {}", &table_name));
     }
     ui.add_space(10.0);
-    
+
     let drop_button = ui.add(egui::Button::new("🗑 Drop All Tables")
         .fill(Color32::from_rgb(200, 50, 50)));
 
