@@ -373,7 +373,25 @@ impl DbManager {
         Ok(())
     }
 
-    pub fn load_file_from_db(conn: &mut Connection, session_name: &str)
+    pub fn load_file_from_db(conn: &mut Connection, session_name: &str, file_name: &str)
+                             -> Result<(String, CsvGrid), Box<dyn Error>>
+    {
+        let mut stmt = conn.prepare(
+            "SELECT file_path, file_content FROM files
+         INNER JOIN sessions ON files.session_id = sessions.id
+         WHERE sessions.name = ? AND file_path = ?"
+        )?;
+
+        let row = stmt.query_row([session_name, file_name], |row| {
+            let file_path: String = row.get(0)?;
+            let content: String = row.get(1)?;
+            Ok((file_path, content))
+        })?;
+
+        let grid: CsvGrid = csv_parser(&row.1).expect("Failed to parse CSV content");
+        Ok((row.0, grid))
+    }
+    pub fn load_session_files_from_db(conn: &mut Connection, session_name: &str)
         -> Result<Vec<(String, CsvGrid)>, Box<dyn Error>>
     {
 

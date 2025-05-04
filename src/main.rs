@@ -8,6 +8,7 @@ mod charter_csv;
 pub mod session;
 mod db_manager;
 mod cir_adapters;
+pub mod components;
 
 use charter_csv::CharterCsvApp;
 

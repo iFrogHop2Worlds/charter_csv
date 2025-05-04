@@ -1,5 +1,5 @@
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
-use crate::charter_utilities::{check_for_screenshot, cir_parser, csv_parser, grid2csv, grid_search, render_db_stats, save_window_as_png, CsvGrid, DraggableLabel, GridLayout, SearchResult};
+use crate::charter_utilities::{check_for_screenshot, cir_parser, combine_grids, csv_parser, grid2csv, grid_search, render_db_stats, save_window_as_png, CsvGrid, DraggableLabel, GridLayout, SearchResult};
 use crate::cir_adapters::sqlite_cir_adapter;
 use crate::csvqb::{csvqb_to_cir, CIR};
 use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager, };
@@ -9,10 +9,14 @@ use egui::{Align, Button, CentralPanel, Color32, Context, FontId, Frame, IconDat
 use image::ImageReader;
 use itertools::Itertools;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 pub use std::thread;
 use std::time::Instant;
+use rayon::prelude::*;
+use crate::components::optimized_load_csv_button::CsvLoaderButton;
 
 pub struct CharterCsvApp {
     db_manager: Option<DbManager>,
@@ -28,8 +32,8 @@ pub struct CharterCsvApp {
     file_sender: Sender<(String, Vec<Vec<String>>)>,
     chart_style_prototype: String,
     sessions: Vec<Session>,
-    current_session: i8,
-    prev_session: i8,
+    current_session: usize,
+    prev_session: usize,
     show_ss_name_popup: bool,
     edit_ss_name: String,
     time_to_hide_state: Option<Instant>,
@@ -79,8 +83,8 @@ impl Default for CharterCsvApp {
             file_sender: tx,
             chart_style_prototype: "Histogram".to_string(),
             sessions: vec![],
-            current_session: -1,
-            prev_session: -2,
+            current_session: 0,
+            prev_session: 9,
             show_ss_name_popup: false,
             edit_ss_name: "".to_string(),
             time_to_hide_state: None,
@@ -186,14 +190,21 @@ impl App for CharterCsvApp {
         //self.sessions = load_sessions_from_directory().expect("Failed to restore sessions");
 
         if self.current_session != self.prev_session && !self.sessions.is_empty() {
+            if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                if let Ok(files) = DbManager::load_session_files_from_db(&mut conn, &*self.sessions[self.current_session].name) {
+                    for (file_path, grid) in files {
+                        self.csv_files.push((file_path, grid));
+                    }
+                }
 
-            let receiver = reconstruct_session(self.sessions[0].clone());
-            while let Ok((file_path, grid )) = receiver.recv() {
-                self.csv_files.push((file_path, grid));
-            }
+                if let Err(err) = DbManager::import_all_csvs(&mut conn, &self.csv_files) {
+                    println!("err {}", err)
+                }
+           }
 
 
-            let ssi = self.current_session as usize;
+
+            let ssi = self.current_session;
             if ssi >= 0 && ssi < self.sessions.len() {
                 for file in &self.sessions[ssi].selected_files {
                     self.multi_pipeline_tracker.insert(*file, vec![*file]);
@@ -232,11 +243,6 @@ impl App for CharterCsvApp {
 
             self.prev_session = self.current_session;
 
-            if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
-                if let Err(err) = DbManager::import_all_csvs(&mut conn, &self.csv_files) {
-                    println!("err {}", err)
-                }
-            }
         }
     }
 }
@@ -301,18 +307,14 @@ impl CharterCsvApp {
                         bottom: 5.0 as i8,
                     })
                     .show(ui, |ui| {
-                        if ui.button("Load File").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
-                                let path_as_string = path.to_str().unwrap().to_string();
-                                let sender = self.file_sender.clone();
-                                thread::spawn(move || {
-                                    if let Ok(content) = std::fs::read_to_string(&path) {
-                                        let grid: CsvGrid = csv_parser(&content).expect("Failed to load csv files");
-                                        let _ = sender.send((path_as_string, grid));
-                                    }
-                                });
-                            }
-                        }
+                        let csv_loader = CsvLoaderButton::new();
+                        // Or with custom config:
+                        // let csv_loader = CsvLoaderButton::with_config(ChunkConfig {
+                        //     chunk_size: 16 * 1024 * 1024,
+                        //     max_chunks_in_memory: 8,
+                        // });
+
+                        csv_loader.show(ui, self.file_sender.clone());
 
                         if ui.button("New File").clicked() {
                             self.screen = Screen::CreateCsv {
@@ -413,7 +415,7 @@ impl CharterCsvApp {
                                         pipelines.push(pipeline_str);
                                     }
                                 }
-                                let ssi = self.current_session as usize;
+                                let ssi = self.current_session;
                                 let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
                                 //save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, selected_files, &self.query_mode).expect("session save failed");
                                 let session = Session {
@@ -466,7 +468,7 @@ impl CharterCsvApp {
                                 let sessions = DbManager::retrieve_session_list(&conn).expect("Failed to retrieve session list");
                                 for (index, session) in sessions.iter().enumerate() {
 
-                                    let active_session = if self.current_session == index as i8 {
+                                    let active_session = if self.current_session == index {
                                         Color32::from_rgb(0, 196, 218)
                                     } else {
                                         Color32::TRANSPARENT
@@ -491,14 +493,14 @@ impl CharterCsvApp {
                                                             ui.label(RichText::new(format!("files: {:?}", session.file_count)).color(Color32::BLACK));
                                                             ui.label(RichText::new(format!("pipelines: {:?}", session.pipeline_count)).color(Color32::BLACK));
 
-                                                            if self.current_session != index as i8 {
+                                                            if self.current_session != index {
                                                                 ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
                                                                     if ui.add_sized(
                                                                         Vec2::new(180.0, 20.0),
                                                                         Button::new("Load")
                                                                             .corner_radius(12.0)
                                                                     ).clicked() {
-                                                                        self.current_session = index as i8;
+                                                                        self.current_session = index;
                                                                         self.multi_pipeline_tracker.clear();
                                                                         self.csv_files.clear();
                                                                         self.csvqb_pipelines.clear();
@@ -541,6 +543,13 @@ impl CharterCsvApp {
         let mut files_to_remove: Option<usize> = None;
         let mut next_screen: Option<Screen> = None;
 
+        // Clone the necessary data before the UI closure
+        let csv_files = self.csv_files.clone();
+        let file_sender = self.file_sender.clone();
+        let db_config = self.db_config.clone();
+        let current_session = self.current_session;
+        let sessions = self.sessions.clone();
+
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             Frame::NONE
                 .fill(Color32::from_rgb(193, 200, 208))
@@ -549,20 +558,14 @@ impl CharterCsvApp {
                         if ui.button("Home").clicked() {
                             next_screen = Some(Screen::Main);
                         }
+                        let csv_loader = CsvLoaderButton::new();
+                        // Or with custom config:
+                        // let csv_loader = CsvLoaderButton::with_config(ChunkConfig {
+                        //     chunk_size: 16 * 1024 * 1024,
+                        //     max_chunks_in_memory: 8,
+                        // });
 
-                        if ui.button("Load File").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().add_filter("CSV files", &["csv"]).pick_file() {
-                                let path_as_string = path.to_str().unwrap().to_string();
-                                let sender = self.file_sender.clone();
-                                thread::spawn(move || {
-                                    if let Ok(content) = std::fs::read_to_string(&path) {
-                                        let grid: CsvGrid = csv_parser(&content).expect("Failed to load file");
-                                        let _ = sender.send((path_as_string, grid));
-                                    }
-                                });
-                            }
-
-                        }
+                        csv_loader.show(ui, self.file_sender.clone());
                         ui.add_space(ui.available_width());
                     })
                 });
@@ -571,7 +574,7 @@ impl CharterCsvApp {
 
             let desired_width = ui.available_width() / 3.0;
             ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
-                for (index, file) in self.csv_files.iter().enumerate() {
+                for (index, file) in csv_files.iter().enumerate() {
                     let file_name = file.0.split("\\").last().unwrap_or("No file name");
                     ui.push_id(index, |ui| {
                         let total_width = ui.available_width();
@@ -588,16 +591,15 @@ impl CharterCsvApp {
                                     }
 
                                     if ui.button("Load from DB").clicked() {
-                                        let sender = self.file_sender.clone();
-                                        let db_path = self.db_config.database_path.get_path().to_owned();
-                                        let session_name = self.sessions[self.current_session as usize].name.clone();
+                                        let sender = file_sender.clone();
+                                        let db_path = db_config.database_path.get_path().to_owned();
+                                        let session_name = sessions[current_session].name.clone();
+                                        let file_name = file_name.to_string();
 
                                         thread::spawn(move || {
                                             if let Ok(mut conn) = rusqlite::Connection::open(&db_path) {
-                                                if let Ok(files) = DbManager::load_file_from_db(&mut conn, &session_name) {
-                                                    for (path, grid) in files {
-                                                        let _ = sender.send((path, grid));
-                                                    }
+                                                if let Ok((path, grid)) = DbManager::load_file_from_db(&mut conn, &session_name, &*file_name.to_lowercase()) {
+                                                    let _ = sender.send((path, grid));
                                                 }
                                             }
                                         });

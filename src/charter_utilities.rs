@@ -12,7 +12,23 @@ pub struct DraggableLabel {
     pub id: u32,
 }
 
+#[derive(Debug)]
+pub enum TextPlacement {
+    Top,
+    Middle,
+    Bottom,
+}
+
 pub type CsvGrid = Vec<Vec<String>>;
+pub struct _2DGrid {
+    pub rows: Vec<Vec<String>>,
+}
+
+impl _2DGrid {
+    pub fn new() -> Self {
+        Self { rows: Vec::new() }
+    }
+}
 
 #[derive(Debug)]
 pub enum CsvError {
@@ -27,11 +43,14 @@ pub fn grid2csv(grid: &CsvGrid) -> String {
         .join("\n")
 }
 
-#[derive(Debug)]
-pub enum TextPlacement {
-    Top,
-    Middle,
-    Bottom,
+pub fn combine_grids(grids: Vec<CsvGrid>) -> _2DGrid {
+    let mut combined = _2DGrid::new();
+
+    for grid in grids {
+        combined.rows.extend(grid);
+    }
+
+    combined
 }
 
 pub fn draw_rotated_text(
