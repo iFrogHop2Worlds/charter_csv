@@ -543,13 +543,6 @@ impl CharterCsvApp {
         let mut files_to_remove: Option<usize> = None;
         let mut next_screen: Option<Screen> = None;
 
-        // Clone the necessary data before the UI closure
-        let csv_files = self.csv_files.clone();
-        let file_sender = self.file_sender.clone();
-        let db_config = self.db_config.clone();
-        let current_session = self.current_session;
-        let sessions = self.sessions.clone();
-
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             Frame::NONE
                 .fill(Color32::from_rgb(193, 200, 208))
@@ -574,7 +567,7 @@ impl CharterCsvApp {
 
             let desired_width = ui.available_width() / 3.0;
             ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
-                for (index, file) in csv_files.iter().enumerate() {
+                for (index, file) in self.csv_files.iter().enumerate() {
                     let file_name = file.0.split("\\").last().unwrap_or("No file name");
                     ui.push_id(index, |ui| {
                         let total_width = ui.available_width();
@@ -591,9 +584,9 @@ impl CharterCsvApp {
                                     }
 
                                     if ui.button("Load from DB").clicked() {
-                                        let sender = file_sender.clone();
-                                        let db_path = db_config.database_path.get_path().to_owned();
-                                        let session_name = sessions[current_session].name.clone();
+                                        let sender = self.file_sender.clone();
+                                        let db_path = self.db_config.database_path.get_path().to_owned();
+                                        let session_name = self.sessions[self.current_session].name.clone();
                                         let file_name = file_name.to_string();
 
                                         thread::spawn(move || {
@@ -784,8 +777,8 @@ impl CharterCsvApp {
                             self.csvqb_pipelines.clear();
                             self.multi_pipeline_tracker.clear();
                             self.graph_data.clear();
-                            if !self.sessions[self.current_session as usize].pipelines.is_empty() {
-                                self.sessions[self.current_session as usize].pipelines.clear();
+                            if !self.sessions[self.current_session].pipelines.is_empty() {
+                                self.sessions[self.current_session].pipelines.clear();
                             }
                         }
 
@@ -1237,7 +1230,7 @@ impl CharterCsvApp {
                                     if ui.button("Save as .png").clicked() {
                                         self.time_to_hide_state = Some(Instant::now());
                                     }
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                                         if ui.button("❌").clicked() {
                                             indices_to_remove.push(index);
                                         }
@@ -1266,12 +1259,12 @@ impl CharterCsvApp {
                                                 outer_margin: Margin::same(0.0 as i8),
                                                 shadow: egui::Shadow::NONE,
                                                 fill: Color32::TRANSPARENT,
-                                                stroke: egui::Stroke::NONE,
+                                                stroke: Stroke::NONE,
                                                 corner_radius: Default::default(),
                                             })
                                             .collapsible(true)
                                             .show(ctx, |ui| {
-                                                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                                                ui.with_layout(egui::Layout::top_down(Align::LEFT), |ui| {
                                                     ui.horizontal(|ui| {
                                                         let label_response = ui.label(&label.text);
                                                         if label_response.clicked() {
@@ -1279,7 +1272,7 @@ impl CharterCsvApp {
                                                         }
                                                     });
                                                     if self.chart_view_editing {
-                                                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                                        ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
                                                             let response = ui.text_edit_singleline(&mut label.text);
                                                             response.changed()
                                                         });
@@ -1429,13 +1422,13 @@ impl CharterCsvApp {
                                }
                                DatabaseType::PostgreSQL => {
                                    // todo(Billy) implement PostgresSQL
-                                   ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                   ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
                                        //specific settings
                                    });
                                }
                                DatabaseType::MongoDB => {
                                    // todo(Billy) implement MongoDB
-                                   ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                   ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
                                        //specific settings
                                    });
                                }

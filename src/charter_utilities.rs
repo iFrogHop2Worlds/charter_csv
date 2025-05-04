@@ -503,8 +503,8 @@ impl GridLayout {
 
         scroll.show_viewport(ui, |ui, viewport| {
             if grid.is_empty() { return; }
-            let total_width: f32 = self.col_widths.iter().take(grid[0].len()).sum();
-            let total_height: f32 = self.row_heights.iter().take(grid.len()).sum();
+            let total_width: f32 = self.col_widths.iter().take(grid[0].len().min(self.col_widths.len())).sum();
+            let total_height: f32 = self.row_heights.iter().take(grid.len().min(self.row_heights.len())).sum();
             ui.set_min_size(Vec2::new(total_width, total_height));
             let mut accumulated_height = 0.0;
             let start_row = {
@@ -519,7 +519,8 @@ impl GridLayout {
             let mut height_in_view = 0.0;
             let mut visible_rows = 0;
             let mut row_idx = start_row;
-            while row_idx < grid.len() && height_in_view < viewport.height() + self.row_heights[row_idx] {
+            while row_idx < grid.len() && row_idx < self.row_heights.len()
+                && height_in_view < viewport.height() + self.row_heights[row_idx] {
                 height_in_view += self.row_heights[row_idx];
                 visible_rows += 1;
                 row_idx += 1;
@@ -527,15 +528,15 @@ impl GridLayout {
 
             let start_col = (viewport.min.x / self.col_widths[0]).floor().max(0.0) as usize;
             let visible_cols = (viewport.width() / self.col_widths[0]).ceil() as usize + 1;
-            let end_row = (start_row + visible_rows).min(grid.len());
-            let end_col = (start_col + visible_cols).min(grid[0].len());
+            let end_row = (start_row + visible_rows).min(grid.len().saturating_sub(1));
+            let end_col = (start_col + visible_cols).min(grid[0].len().saturating_sub(1));
 
             let top_offset = self.row_heights.iter().take(start_row).sum::<f32>();
             ui.add_space(top_offset);
 
             ui.spacing_mut().item_spacing.y = -3.0;
             ui.spacing_mut().item_spacing.x = -3.0;
-            for row_idx in start_row..end_row {
+            for row_idx in start_row..end_row.saturating_add(1){
                 ui.horizontal(|ui| {
                     let left_offset = self.col_widths.iter().take(start_col).sum::<f32>();
                     if start_col > 0 {
@@ -732,8 +733,7 @@ pub fn render_db_stats(ui: &mut egui::Ui, conn: &rusqlite::Connection) -> Result
         ui.label(format!("• {}", &table_name));
     }
     ui.add_space(10.0);
-
-    // Add a destructive red button
+    
     let drop_button = ui.add(egui::Button::new("🗑 Drop All Tables")
         .fill(Color32::from_rgb(200, 50, 50)));
 
