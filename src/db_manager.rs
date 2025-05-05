@@ -373,23 +373,36 @@ impl DbManager {
         Ok(())
     }
 
-    pub fn load_file_from_db(conn: &mut Connection, session_name: &str, file_name: &str)
-                             -> Result<(String, CsvGrid), Box<dyn Error>>
-    {
-        let mut stmt = conn.prepare(
-            "SELECT file_path, file_content FROM files
-         INNER JOIN sessions ON files.session_id = sessions.id
-         WHERE sessions.name = ? AND file_path = ?"
-        )?;
+    pub fn load_file_from_db(conn: &mut Connection, file_name: &str) -> Result<(String, CsvGrid), Box<dyn Error>> {
+        let content_query = format!("SELECT * FROM \"{}\"", file_name);
+        let mut content_stmt = conn.prepare(&content_query)?;
+        let mut grid: CsvGrid = Vec::new();
 
-        let row = stmt.query_row([session_name, file_name], |row| {
-            let file_path: String = row.get(0)?;
-            let content: String = row.get(1)?;
-            Ok((file_path, content))
+        let column_names: Vec<String> = content_stmt
+            .column_names()
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        grid.push(column_names);
+
+        let column_count = content_stmt.column_count();
+        let rows = content_stmt.query_map([], |row| {
+            let mut row_data = Vec::new();
+            for i in 0..column_count {
+                let value: String = row.get(i)?;
+                row_data.push(value);
+            }
+            Ok(row_data)
         })?;
 
-        let grid: CsvGrid = csv_parser(&row.1).expect("Failed to parse CSV content");
-        Ok((row.0, grid))
+        for row_result in rows {
+            grid.push(row_result?);
+        }
+
+        let path = format!("{}.csv", file_name);
+
+        Ok((path, grid))
     }
     pub fn load_session_files_from_db(conn: &mut Connection, session_name: &str)
         -> Result<Vec<(String, CsvGrid)>, Box<dyn Error>>

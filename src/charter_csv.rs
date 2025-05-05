@@ -127,10 +127,9 @@ impl App for CharterCsvApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         check_for_screenshot(ctx);
 
-        // I want to optimize how we hold files in memory, we should drop a file out of memory once it is loaded into our db
-        // we could choose to load it back into memory if we want to work with it in csvqb? Could we flag items to auto load into memory?
+        // were loading session files by default might want to switch that later
         if let Ok((path, grid)) = self.file_receiver.try_recv() {
-            self.csv_files.push((path.clone(), grid.clone())); // i def do not like this we should have a filepath in our db so we can load file into ram that way?
+            self.csv_files.push((path.clone(), grid.clone()));
             if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
                 if let Err(err) = DbManager::import_all_csvs(&mut conn, &vec![(path, grid)]) {
                     println!("err {}", err)
@@ -567,34 +566,52 @@ impl CharterCsvApp {
             let desired_width = ui.available_width() / 3.0;
             ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
                 for (index, file) in self.sessions[self.current_session].files.iter().enumerate() {
-                    let file_name = file.split("\\").last().unwrap_or("No file name");
+                    let file_name = file.split("\\")
+                        .last()
+                        .unwrap_or("No file name")
+                        .replace(['-', ' '], "_");
                     ui.push_id(index, |ui| {
                         let total_width = ui.available_width();
                         let padding = (total_width - desired_width) / 2.0;
                         ui.allocate_space(Vec2::new(padding, 0.0));
 
-                        ui.group(|ui| {
+                        let file_loaded_inmemory = self.csv_files.get(index)
+                            .map(|(files, _)| {
+                                files.split("\\").last().unwrap_or("No file name") == file_name })
+                            .unwrap_or(false);
+
+                        let mut frame = Frame::group(ui.style());
+                        if file_loaded_inmemory {
+                            frame = frame
+                                .fill(Color32::from_rgb(150, 200, 150))
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(100, 150, 100)));
+                        }
+
+                        frame.show(ui, |ui| {
                             ui.set_max_width(desired_width);
                             ui.horizontal(|ui| {
-                                ui.label(file_name);
+                                ui.label(&file_name);
                                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+
                                     if ui.button("unload").clicked() {
                                         files_to_remove = Some(index);
                                     }
 
                                     if ui.button("Load from DB").clicked() {
-                                        let sender = self.file_sender.clone();
+                                        //let sender = self.file_sender.clone();
                                         let db_path = self.db_config.database_path.get_path().to_owned();
-                                        let session_name = self.sessions[self.current_session].name.clone();
-                                        let file_name = file_name.to_string();
+                                        let file_name = file_name.trim_end_matches(".csv").to_string();
+                                        println!("loading file: {} from db", file_name);
+                                        if let Ok(mut conn) = rusqlite::Connection::open(&db_path) {
+                                            //thread::spawn(move || {
+                                                if let Ok((path, grid)) = DbManager::load_file_from_db(&mut conn, &*file_name) {
+                                                    println!("file path: {}", path);
+                                                    self.csv_files[index] = (path, grid);
+                                                }   
 
-                                        thread::spawn(move || {
-                                            if let Ok(mut conn) = rusqlite::Connection::open(&db_path) {
-                                                if let Ok((path, grid)) = DbManager::load_file_from_db(&mut conn, &session_name, &*file_name.to_lowercase()) {
-                                                    let _ = sender.send((path, grid));
-                                                }
-                                            }
-                                        });
+                                            //});
+                                        }
+
                                     }
 
                                     if ui.button("edit").clicked() {
@@ -612,7 +629,10 @@ impl CharterCsvApp {
         });
 
         if let Some(index) = files_to_remove {
-            self.csv_files.remove(index);
+            if index < self.csv_files.len() {
+                let file = format!("_{}_", self.csv_files[index].0.clone());
+                self.csv_files[index] = (file, CsvGrid::new());
+            }
         }
         if let Some(screen) = next_screen {
             self.screen = screen;
@@ -756,8 +776,8 @@ impl CharterCsvApp {
                         ui.add_space(ui.available_width() / 8.0);
                         egui::ComboBox::from_label("Select File")
                             .show_ui(ui, |ui| {
-                                for (index, file) in self.csv_files.iter().enumerate() {
-                                    let file_name = file.0.split('\\').last().and_then(|f| f.split('.').next()).unwrap_or("No file name");
+                                for (index, file) in self.sessions[self.current_session].files.iter().enumerate() {
+                                    let file_name = file.split('\\').last().and_then(|f| f.split('.').next()).unwrap_or("No file name");
                                     let mut selected = self.multi_pipeline_tracker.contains_key(&index);
 
                                     if ui.checkbox(&mut selected, file_name).clicked() {

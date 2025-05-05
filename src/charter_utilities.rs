@@ -4,6 +4,7 @@ use egui::epaint::TextShape;
 use crate::charter_csv::PlotPoint;
 use crate::csvqb::CIR;
 use rfd::FileDialog;
+use crate::db_manager::DbManager;
 
 #[derive(Clone, Debug)]
 pub struct DraggableLabel {
@@ -733,18 +734,38 @@ pub fn render_db_stats(ui: &mut egui::Ui, conn: &rusqlite::Connection) -> Result
     }
 
     ui.add_space(10.0);
-    ui.heading("Database Statistics");
-    ui.add_space(5.0);
+    ui.horizontal(|ui| {
+        ui.add_space(ui.available_width() / 2.0 - 120.0);
+        ui.vertical(|ui| {
+            ui.heading("Sessions");
+            ui.add_space(5.0);
 
-    ui.label(format!("Total Tables: {}", total_tables));
-    ui.label(format!("Total Columns: {}", total_columns));
-    ui.label(format!("Total Rows: {}", total_rows));
+            if let Ok(sessions) = DbManager::retrieve_session_list(&conn) {
+                for session in sessions {
+                    ui.label(format!("Name: {}", session.name));
+                    ui.label(format!("Files: {}", session.file_count));
+                    ui.label(format!("Pipelines: {}", session.pipeline_count));
+                    ui.label(format!("Query Mode: {}", session.query_mode));
+                    ui.add_space(5.0);
+                }
+            }
+        });
 
-    ui.add_space(5.0);
-    ui.label("Table Names:");
-    for table_name in &table_names {
-        ui.label(format!("• {}", &table_name));
-    }
+        ui.separator();
+
+        ui.vertical(|ui| {
+            ui.heading("Files / Db Tables");
+            ui.add_space(5.0);
+            ui.label(format!("Tables: {}", total_tables));
+            ui.label(format!("Columns: {}", total_columns));
+            ui.label(format!("Rows: {}", total_rows));
+            ui.add_space(5.0);
+            ui.label("File Names:");
+            for table_name in &table_names {
+                ui.label(format!("• {}", table_name));
+            }
+        });
+    });
     ui.add_space(10.0);
 
     let drop_button = ui.add(egui::Button::new("🗑 Drop All Tables")
