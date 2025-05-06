@@ -3,7 +3,7 @@ use crate::charter_utilities::{check_for_screenshot, cir_parser, grid2csv, grid_
 use crate::cir_adapters::sqlite_cir_adapter;
 use crate::csvqb::{csvqb_to_cir, CIR};
 use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager, };
-use crate::session::{reconstruct_session, Session};
+use crate::session::{reconstruct_session, update_current_session, Session};
 use eframe::App;
 use egui::{Align, Button, CentralPanel, Color32, Context, FontId, Frame, IconData, Id, Image, Margin, Order, RichText, ScrollArea, Stroke, TextEdit, TextureHandle, Ui, Vec2, Window};
 use image::ImageReader;
@@ -127,13 +127,22 @@ impl App for CharterCsvApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         check_for_screenshot(ctx);
 
-        // were loading session files by default might want to switch that later
         if let Ok((path, grid)) = self.file_receiver.try_recv() {
             self.csv_files.push((path.clone(), grid.clone()));
             if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
                 if let Err(err) = DbManager::import_all_csvs(&mut conn, &vec![(path, grid)]) {
                     println!("err {}", err)
                 }
+
+                update_current_session(
+                    &self.csv_files,
+                    &mut self.csvqb_pipelines,
+                    &mut self.sessions,
+                    &mut self.multi_pipeline_tracker,
+                    self.current_session,
+                    &self.query_mode,
+                    conn
+                );
             }
         }
 
@@ -312,7 +321,10 @@ impl CharterCsvApp {
                         //     max_chunks_in_memory: 8,
                         // });
 
-                        csv_loader.show(ui, self.file_sender.clone());
+                        csv_loader.show(
+                            ui,
+                            self.file_sender.clone(),
+                        );
 
                         if ui.button("New File").clicked() {
                             self.screen = Screen::CreateCsv {
@@ -389,7 +401,7 @@ impl CharterCsvApp {
             });
 
             ui.vertical_centered(|ui| {
-                if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
                     if !self.sessions.is_empty() {
                         ui.add_space(100.0);
                         ui.heading(RichText::new("sessions").color(Color32::BLACK));
@@ -401,32 +413,15 @@ impl CharterCsvApp {
                             }
 
                             if ui.button("Save Current").clicked() {
-                                let mut file_paths: Vec<String> = vec![];
-                                let mut pipelines: Vec<String> = vec![];
-                                for (path, _) in self.csv_files.iter() {
-                                    file_paths.push(path.to_string());
-                                }
-                                println!("{:?}", file_paths);
-                                for (_index, pipeline) in self.csvqb_pipelines.iter().enumerate() {
-                                    for (index, query_string) in pipeline.iter() {
-                                        let pipeline_str = index.to_string() + &*" ".to_string() + &*query_string.join(" ");
-                                        pipelines.push(pipeline_str);
-                                    }
-                                }
-                                let ssi = self.current_session;
-                                let selected_files = self.multi_pipeline_tracker.keys().copied().sorted().collect();
-                                //save_session(self.sessions[ssi].name.to_string(), file_paths, pipelines, selected_files, &self.query_mode).expect("session save failed");
-                                let session = Session {
-                                    name: self.sessions[ssi].name.to_string(),
-                                    files: file_paths,
-                                    pipelines: vec![pipelines],
-                                    selected_files,
-                                    query_mode: self.query_mode.clone(),
-
-                                };
-                                if let Err(err) = DbManager::save_session_to_database( conn, vec![session]) {
-                                    ui.label(format!("Error saving session to sql lite db: {}", err));
-                                }
+                                update_current_session(
+                                    &self.csv_files,
+                                    &mut self.csvqb_pipelines,
+                                    &mut self.sessions,
+                                    &mut self.multi_pipeline_tracker,
+                                    self.current_session,
+                                    &self.query_mode,
+                                    conn
+                                );
                             }
                         });
                     } else {
@@ -556,7 +551,10 @@ impl CharterCsvApp {
                         //     max_chunks_in_memory: 8,
                         // });
 
-                        csv_loader.show(ui, self.file_sender.clone());
+                        csv_loader.show(
+                            ui,
+                            self.file_sender.clone(),
+                        );
                         ui.add_space(ui.available_width());
                     })
                 });
@@ -592,7 +590,9 @@ impl CharterCsvApp {
                             ui.horizontal(|ui| {
                                 ui.label(&file_name);
                                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-
+                                    while self.csv_files.len() <= index {
+                                        self.csv_files.push(("".to_string(), CsvGrid::new()));
+                                    }
                                     if ui.button("unload").clicked() {
                                         files_to_remove = Some(index);
                                     }
@@ -601,7 +601,7 @@ impl CharterCsvApp {
                                         //let sender = self.file_sender.clone();
                                         let db_path = self.db_config.database_path.get_path().to_owned();
                                         let file_name = file_name.trim_end_matches(".csv").to_string();
-                                        println!("loading file: {} from db", file_name);
+
                                         if let Ok(mut conn) = rusqlite::Connection::open(&db_path) {
                                             //thread::spawn(move || {
                                                 if let Ok((path, grid)) = DbManager::load_file_from_db(&mut conn, &*file_name) {
@@ -614,12 +614,15 @@ impl CharterCsvApp {
 
                                     }
 
-                                    if ui.button("edit").clicked() {
-                                        next_screen = Some(Screen::EditCsv {
-                                            index,
-                                            content: self.csv_files[index].clone(),
-                                        });
+                                    if file_loaded_inmemory {
+                                        if ui.button("edit").clicked() {
+                                            next_screen = Some(Screen::EditCsv {
+                                                index,
+                                                content: self.csv_files[index].clone(),
+                                            });
+                                        }
                                     }
+
                                 });
                             });
                         });

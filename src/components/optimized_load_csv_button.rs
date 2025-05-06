@@ -1,10 +1,14 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufRead};
+use std::path::PathBuf;
 use std::thread;
 use std::sync::mpsc::Sender;
 use rayon::prelude::*;
 use egui::Ui;
-use crate::charter_utilities::{combine_grids, csv_parser};
+use crate::charter_utilities::{combine_grids, csv_parser, CsvGrid};
+use crate::db_manager::DatabaseType;
+use crate::session::{update_current_session, Session};
 
 /// Represents the configuration for chunk processing
 #[derive(Clone)]
@@ -38,7 +42,11 @@ impl CsvLoaderButton {
         Self { config }
     }
 
-    pub fn show(&self, ui: &mut Ui, file_sender: Sender<(String, Vec<Vec<String>>)>) {
+    pub fn show(
+        &self,
+        ui: &mut Ui,
+        file_sender: Sender<(String, Vec<Vec<String>>)>,
+    ) {
         if ui.button("Load File").clicked() {
             self.handle_file_selection(file_sender);
         }

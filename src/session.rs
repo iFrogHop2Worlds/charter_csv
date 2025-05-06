@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Write, BufRead, BufReader};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::mpsc;
 use std::thread;
+use itertools::Itertools;
 use crate::charter_utilities::{csv_parser, CsvGrid};
-use crate::db_manager::DatabaseType;
+use crate::db_manager::{DatabaseType, DbManager};
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -54,6 +56,44 @@ impl Session {
             csvqb_pipelines.push(pipeline);
         }
         csvqb_pipelines
+    }
+}
+pub fn update_current_session(
+    csv_files: &Vec<(String, CsvGrid)>,
+    csvqb_pipelines: &mut Vec<Vec<(usize, Vec<String>)>>,
+    sessions: &mut Vec<Session>,
+    multi_pipeline_tracker: &mut HashMap<usize, Vec<usize>>,
+    current_session: usize,
+    query_mode: &DatabaseType,
+    conn: rusqlite::Connection
+) {
+    let mut file_paths: Vec<String> = vec![];
+    let mut pipelines: Vec<String> = vec![];
+
+    for (path, _) in csv_files.iter() {
+        file_paths.push(path.to_string());
+    }
+
+    for (_index, pipeline) in csvqb_pipelines.iter().enumerate() {
+        for (index, query_string) in pipeline.iter() {
+            let pipeline_str = index.to_string() + &*" ".to_string() + &*query_string.join(" ");
+            pipelines.push(pipeline_str);
+        }
+    }
+
+    let ssi = current_session;
+    let selected_files = multi_pipeline_tracker.keys().copied().sorted().collect();
+
+    let session = Session {
+        name: sessions[ssi].name.to_string(),
+        files: file_paths,
+        pipelines: vec![pipelines],
+        selected_files,
+        query_mode: query_mode.clone(),
+    };
+    
+    if let Err(err) = DbManager::save_session_to_database(conn, vec![session]) {
+        println!("{}", format!("Error saving session to sql lite db: {}", err));
     }
 }
 pub fn save_session(
