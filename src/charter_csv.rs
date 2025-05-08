@@ -83,7 +83,7 @@ impl Default for CharterCsvApp {
             chart_style_prototype: "Histogram".to_string(),
             sessions: vec![],
             current_session: 0,
-            prev_session: 9,
+            prev_session: 100000,
             show_ss_name_popup: false,
             edit_ss_name: "".to_string(),
             time_to_hide_state: None,
@@ -189,9 +189,12 @@ impl App for CharterCsvApp {
             }
         }
 
-        if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
-            self.sessions = DbManager::load_sessions_from_db(&conn).expect("Failed to load sessions");
-        }
+        // if self.current_session == 0 && self.prev_session == 100000 {
+            if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                self.sessions = DbManager::load_sessions_from_db(&conn).expect("Failed to load sessions");
+            }
+        //     self.prev_session = 99999
+        // }
 
         // deprecated local text file based sessions
         //self.sessions = load_sessions_from_directory().expect("Failed to restore sessions");
@@ -504,13 +507,41 @@ impl CharterCsvApp {
                                                                         while let Ok((file_path, grid)) = receiver.recv() {
                                                                             self.csv_files.push((file_path, grid));
                                                                         }
+                                                                        let mut grouped_pipelines: Vec<Vec<(usize, Vec<String>)>> = Vec::new();
+                                                                        let mut temp_map: HashMap<usize, Vec<(usize, Vec<String>)>> = HashMap::new();
+
                                                                         for (_index, pipeline) in self.sessions[index].pipelines.iter().enumerate() {
                                                                             if pipeline.is_empty() {
                                                                                 println!("Warning: Empty pipeline found, skipping...");
                                                                                 continue;
                                                                             }
-                                                                            self.csvqb_pipelines.push(vec![(_index, pipeline.to_owned())]);
+
+                                                                            for query in pipeline {
+                                                                                // println!("Query: {:?}", query);
+                                                                                if let Some(query_str) = query.to_string().split_once(' ') {
+                                                                                    let (number, remainder) = query_str;
+                                                                                    if let Ok(index) = number.parse::<usize>() {
+                                                                                        temp_map
+                                                                                            .entry(index)
+                                                                                            .or_insert_with(Vec::new)
+                                                                                            .push((index, remainder.split(',').map(|s| s.to_string()).collect()));
+                                                                                    }
+                                                                                }
+                                                                            }
                                                                         }
+
+                                                                        let mut indices: Vec<usize> = temp_map.keys().cloned().collect();
+                                                                        indices.sort();
+                                                                        for index in indices {
+                                                                            if let Some(pipeline_group) = temp_map.get(&index) {
+                                                                                grouped_pipelines.push(pipeline_group.clone());
+                                                                            }
+                                                                        }
+
+                                                                        if !grouped_pipelines.is_empty() {
+                                                                            self.csvqb_pipelines = grouped_pipelines;
+                                                                        }
+
                                                                     }
                                                                 });
                                                             }

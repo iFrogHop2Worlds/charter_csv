@@ -132,7 +132,7 @@ impl DbManager {
             let pipelines_json = serde_json::to_string(&session.pipelines)?;
             let selected_files_json = serde_json::to_string(&session.selected_files)?;
             let query_mode_str = format!("{:?}", session.query_mode);
-
+            println!("{:?}", pipelines_json);
             transaction.execute(
                 "INSERT OR REPLACE INTO sessions (name, files, pipelines, selected_files, query_mode)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -228,13 +228,46 @@ impl DbManager {
                     Box::new(e)
                 ))?;
 
-            let pipelines: Vec<Vec<String>> = serde_json::from_str(&pipelines_json)
+            // let pipelines: Vec<Vec<String>> = serde_json::from_str(&pipelines_json)
+            //     .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+            //         0,
+            //         rusqlite::types::Type::Text,
+            //         Box::new(e)
+            //     ))?;
+            let raw_pipelines: Vec<Vec<String>> = serde_json::from_str(&pipelines_json)
                 .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
                     0,
                     rusqlite::types::Type::Text,
                     Box::new(e)
                 ))?;
 
+            let mut pipelines: Vec<Vec<String>> = Vec::new();
+            let mut current_group: Vec<String> = Vec::new();
+            let mut last_num = 0;
+
+            for query_group in raw_pipelines.iter().flat_map(|group| group.iter()) {
+                if let Some(num_char) = query_group.chars().next() {
+                    if let Ok(num) = num_char.to_string().parse::<i32>() {
+                         if num == last_num {
+                             if !query_group.is_empty() {
+                                 current_group.push(query_group.to_string());
+                             }
+                         } else  {
+                             if !current_group.is_empty() {
+                                 pipelines.push(current_group.clone());
+                                 current_group = Vec::new();
+                                 current_group.push(query_group.to_string());
+                             }
+                             last_num += 1;
+                         }
+                    }
+                }
+            }
+
+            if !current_group.is_empty() {
+                pipelines.push(current_group);
+            }
+            // println!("Pipes: {:?}", pipelines);
             let selected_files: Vec<usize> = serde_json::from_str(&selected_files_json)
                 .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
                     0,
@@ -404,7 +437,7 @@ impl DbManager {
 
         Ok((path, grid))
     }
-    pub fn load_session_files_from_db(conn: &mut Connection, session_name: &str)
+    pub fn load_session_files_from_db(conn: &mut    Connection, session_name: &str)
         -> Result<Vec<(String, CsvGrid)>, Box<dyn Error>>
     {
 

@@ -68,16 +68,18 @@ pub fn update_current_session(
     conn: rusqlite::Connection
 ) {
     let mut file_paths: Vec<String> = vec![];
-    let mut pipelines: Vec<String> = vec![];
+    let mut pipelines: Vec<Vec<String>> = vec![];
 
     for (path, _) in csv_files.iter() {
         file_paths.push(path.to_string());
     }
 
-    for (_index, pipeline) in csvqb_pipelines.iter().enumerate() {
-        for (index, query_string) in pipeline.iter() {
-            let pipeline_str = index.to_string() + &*" ".to_string() + &*query_string.join(" ");
-            pipelines.push(pipeline_str);
+    for (_index, pipeline) in csvqb_pipelines.iter_mut().enumerate() {
+        for (pipeline_number, query_string) in pipeline.iter_mut() {
+            let mut pipeline_collection = vec![];
+            let pipeline_str = format!("{} {}", pipeline_number.to_string(), query_string.join(" "));
+            pipeline_collection.push(pipeline_str);
+            pipelines.push(pipeline_collection);
         }
     }
 
@@ -87,11 +89,11 @@ pub fn update_current_session(
     let session = Session {
         name: sessions[ssi].name.to_string(),
         files: file_paths,
-        pipelines: vec![pipelines],
+        pipelines,
         selected_files,
         query_mode: query_mode.clone(),
     };
-    
+
     if let Err(err) = DbManager::save_session_to_database(conn, vec![session]) {
         println!("{}", format!("Error saving session to sql lite db: {}", err));
     }
