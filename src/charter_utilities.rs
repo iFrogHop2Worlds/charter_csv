@@ -1,10 +1,10 @@
 use std::path::PathBuf;
-use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText, ScrollArea, Vec2, TextEdit, Response, Sense, CursorIcon, StrokeKind, Align};
+use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText, ScrollArea, Vec2, TextEdit, Sense, CursorIcon, StrokeKind};
 use egui::epaint::TextShape;
 use crate::charter_csv::PlotPoint;
 use crate::csvqb::CIR;
 use rfd::FileDialog;
-use crate::db_manager::DbManager;
+use crate::session::retrieve_session_list;
 
 #[derive(Clone, Debug)]
 pub struct DraggableLabel {
@@ -740,7 +740,7 @@ pub fn render_db_stats(ui: &mut egui::Ui, conn: &rusqlite::Connection) -> Result
             ui.heading("Sessions");
             ui.add_space(5.0);
 
-            if let Ok(sessions) = DbManager::retrieve_session_list(&conn) {
+            if let Ok(sessions) = retrieve_session_list(&conn) {
                 for session in sessions {
                     ui.label(format!("Name: {}", session.name));
                     ui.label(format!("Files: {}", session.file_count));

@@ -3,7 +3,7 @@ use crate::charter_utilities::{check_for_screenshot, cir_parser, grid2csv, grid_
 use crate::cir_adapters::sqlite_cir_adapter;
 use crate::csvqb::{csvqb_to_cir, CIR};
 use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager, };
-use crate::session::{reconstruct_session, update_current_session, Session};
+use crate::session::{load_session_files_from_db, load_sessions_from_db, reconstruct_session, retrieve_session_list, save_session_to_database, update_current_session, Session};
 use eframe::App;
 use egui::{Align, Button, CentralPanel, Color32, Context, FontId, Frame, IconData, Id, Image, Margin, Order, RichText, ScrollArea, Stroke, TextEdit, TextureHandle, Ui, Vec2, Window};
 use image::ImageReader;
@@ -17,6 +17,8 @@ use std::time::Instant;
 use rayon::prelude::*;
 use crate::components::optimized_load_csv_button::CsvLoaderButton;
 
+
+// Application is still in early development App state is scheduled for a refactor soon.
 pub struct CharterCsvApp {
     db_manager: Option<DbManager>,
     db_config: DatabaseConfig,
@@ -189,9 +191,10 @@ impl App for CharterCsvApp {
             }
         }
 
+        // todo (Billy) Think of a better way to gaurd this so we don't continuously load sessions, not hurting perf but I don't like it.
         // if self.current_session == 0 && self.prev_session == 100000 {
             if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
-                self.sessions = DbManager::load_sessions_from_db(&conn).expect("Failed to load sessions");
+                self.sessions = load_sessions_from_db(&conn).expect("Failed to load sessions");
             }
         //     self.prev_session = 99999
         // }
@@ -201,7 +204,7 @@ impl App for CharterCsvApp {
 
         if self.current_session != self.prev_session && !self.sessions.is_empty() {
             if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
-                if let Ok(files) = DbManager::load_session_files_from_db(&mut conn, &*self.sessions[self.current_session].name) {
+                if let Ok(files) = load_session_files_from_db(&mut conn, &*self.sessions[self.current_session].name) {
                     for (file_path, grid) in files {
                         self.csv_files.push((file_path, grid));
                     }
@@ -216,16 +219,8 @@ impl App for CharterCsvApp {
 
             let ssi = self.current_session;
             if ssi >= 0 && ssi < self.sessions.len() {
-                for file in &self.sessions[ssi].selected_files {
-                    self.multi_pipeline_tracker.insert(*file, vec![*file]);
-                }
                 let query_mode = self.sessions[ssi].query_mode.clone();
-                // let pipelines = self.sessions[ssi].pipelines.clone();
-                // let files = self.sessions[ssi].files.clone();
-                // let selected_files = self.sessions[ssi].selected_files.clone();
-
                 self.query_mode = query_mode;
-
             }
             let selected_files: Vec<usize> = self.multi_pipeline_tracker.keys().copied().sorted().collect();
 
@@ -379,7 +374,7 @@ impl CharterCsvApp {
                                                     query_mode: self.query_mode.clone(),
 
                                                 };
-                                                if let Err(err) = DbManager::save_session_to_database( conn, vec![session]) {
+                                                if let Err(err) = save_session_to_database( conn, vec![session]) {
                                                     println!("{}", format!("Error saving session to sql lite db: {}", err));
                                                 }
                                             }
@@ -404,7 +399,7 @@ impl CharterCsvApp {
             });
 
             ui.vertical_centered(|ui| {
-                if let Ok(mut conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
+                if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
                     if !self.sessions.is_empty() {
                         ui.add_space(100.0);
                         ui.heading(RichText::new("sessions").color(Color32::BLACK));
@@ -461,7 +456,7 @@ impl CharterCsvApp {
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
                             if let Ok(conn) = rusqlite::Connection::open(self.db_config.database_path.get_path()) {
-                                let sessions = DbManager::retrieve_session_list(&conn).expect("Failed to retrieve session list");
+                                let sessions = retrieve_session_list(&conn).expect("Failed to retrieve session list");
                                 for (index, session) in sessions.iter().enumerate() {
 
                                     let active_session = if self.current_session == index {
@@ -517,10 +512,21 @@ impl CharterCsvApp {
                                                                             }
 
                                                                             for query in pipeline {
-                                                                                // println!("Query: {:?}", query);
                                                                                 if let Some(query_str) = query.to_string().split_once(' ') {
                                                                                     let (number, remainder) = query_str;
                                                                                     if let Ok(index) = number.parse::<usize>() {
+
+                                                                                        self.multi_pipeline_tracker.entry(index)
+                                                                                            .and_modify(|pipes| pipes.push(index))
+                                                                                            .or_insert_with(|| vec![1]);
+                                                                                        println!("Immediate check: {:?}", self.multi_pipeline_tracker);
+
+                                                                                        if let Some(pipes) = self.multi_pipeline_tracker.get(&index) {
+                                                                                            println!("Verification - pipes for index {}: {:?}", index, pipes);
+                                                                                        }
+
+
+                                                                                        println!("multi pipeline tracker: {:?}", self.multi_pipeline_tracker);
                                                                                         temp_map
                                                                                             .entry(index)
                                                                                             .or_insert_with(Vec::new)
@@ -541,6 +547,8 @@ impl CharterCsvApp {
                                                                         if !grouped_pipelines.is_empty() {
                                                                             self.csvqb_pipelines = grouped_pipelines;
                                                                         }
+
+
 
                                                                     }
                                                                 });
@@ -913,7 +921,7 @@ impl CharterCsvApp {
                                     .iter()
                                     .map(|(k, v)| (*k, v.clone()))
                                     .collect();
-                                // pipelines gui
+
                                 for (index, fields) in csv_columns.iter() {
                                     if let Some(pipelines) = indices_and_pipelines.iter().find(|(k, _)| k == index) {
                                         let _index = *index;
@@ -1432,7 +1440,7 @@ impl CharterCsvApp {
 
                            match self.db_config.db_type {
                                DatabaseType::SQLite => {
-                                   ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                                   ui.with_layout(egui::Layout::top_down(Align::Center), |ui| {
                                        ui.horizontal(|ui| {
                                            ui.add_space(ui.available_width() / 2.0 - 120.0);
                                            ui.radio_value(

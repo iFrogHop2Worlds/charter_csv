@@ -1,14 +1,10 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufRead};
-use std::path::PathBuf;
 use std::thread;
 use std::sync::mpsc::Sender;
 use rayon::prelude::*;
 use egui::Ui;
-use crate::charter_utilities::{combine_grids, csv_parser, CsvGrid};
-use crate::db_manager::DatabaseType;
-use crate::session::{update_current_session, Session};
+use crate::charter_utilities::{combine_grids, csv_parser};
 
 /// Represents the configuration for chunk processing
 #[derive(Clone)]
