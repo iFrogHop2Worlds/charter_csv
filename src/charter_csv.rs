@@ -1,5 +1,5 @@
 use crate::charter_graphs::{draw_bar_graph, draw_flame_graph, draw_histogram, draw_line_chart, draw_pie_chart, draw_scatter_plot};
-use crate::charter_utilities::{check_for_screenshot, cir_parser, grid2csv, grid_search, render_db_stats, save_window_as_png, CsvGrid, DraggableLabel, GridLayout, SearchResult};
+use crate::charter_utilities::{check_for_screenshot, cir_parser, custom_divider, grid2csv, grid_search, render_db_stats, save_window_as_png, CsvGrid, DraggableLabel, GridLayout, SearchResult};
 use crate::cir_adapters::sqlite_cir_adapter;
 use crate::csvqb::{csvqb_to_cir, CIR};
 use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager, };
@@ -46,6 +46,7 @@ pub struct CharterCsvApp {
     additional_searches: Vec<SearchResult>,
     dark_mode_enabled: bool,
     query_mode: DatabaseType,
+    divider_position: f32
 }
 
 pub enum Screen {
@@ -97,6 +98,7 @@ impl Default for CharterCsvApp {
             additional_searches: vec![],
             dark_mode_enabled: false,
             query_mode: DatabaseType::CsvQB,
+            divider_position: 555.0,
         };
         match ImageReader::open("src/sailboat.png") {
             Ok(image_reader) => {
@@ -513,24 +515,17 @@ impl CharterCsvApp {
 
                                                                             for query in pipeline {
                                                                                 if let Some(query_str) = query.to_string().split_once(' ') {
-                                                                                    let (number, remainder) = query_str;
+                                                                                    let (number, remainder) = query_str;    
                                                                                     if let Ok(index) = number.parse::<usize>() {
 
                                                                                         self.multi_pipeline_tracker.entry(index)
                                                                                             .and_modify(|pipes| pipes.push(index))
-                                                                                            .or_insert_with(|| vec![1]);
-                                                                                        println!("Immediate check: {:?}", self.multi_pipeline_tracker);
+                                                                                            .or_insert_with(|| vec![index]);
 
-                                                                                        if let Some(pipes) = self.multi_pipeline_tracker.get(&index) {
-                                                                                            println!("Verification - pipes for index {}: {:?}", index, pipes);
-                                                                                        }
-
-
-                                                                                        println!("multi pipeline tracker: {:?}", self.multi_pipeline_tracker);
                                                                                         temp_map
                                                                                             .entry(index)
                                                                                             .or_insert_with(Vec::new)
-                                                                                            .push((index, remainder.split(',').map(|s| s.to_string()).collect()));
+                                                                                            .push((index, remainder.split(' ').map(|s| s.to_string()).collect()));
                                                                                     }
                                                                                 }
                                                                             }
@@ -547,9 +542,6 @@ impl CharterCsvApp {
                                                                         if !grouped_pipelines.is_empty() {
                                                                             self.csvqb_pipelines = grouped_pipelines;
                                                                         }
-
-
-
                                                                     }
                                                                 });
                                                             }
@@ -917,6 +909,7 @@ impl CharterCsvApp {
                             .max_height(ui.available_height())
                             .max_width(ui.available_width())
                             .show(ui, |ui| {
+                                ui.set_width(self.divider_position);
                                 let indices_and_pipelines: Vec<(usize, Vec<usize>)> = self.multi_pipeline_tracker
                                     .iter()
                                     .map(|(k, v)| (*k, v.clone()))
@@ -972,7 +965,7 @@ impl CharterCsvApp {
                                                         }
                                                     }
                                                 });
-                                                ui.add_space(112.0);
+
                                                 ui.push_id(_index.to_string() + &*index.to_string(), |ui| {
                                                     ui.horizontal(|ui| {
                                                         egui::ComboBox::from_label("graph type")
@@ -1053,7 +1046,7 @@ impl CharterCsvApp {
                                                     String::new()
                                                 };
 
-                                                if ui.add_sized((ui.available_width() / 3.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
+                                                if ui.add_sized((ui.available_width() - 20.0, 0.0), TextEdit::singleline(&mut pipeline_str)).changed() {
                                                     while self.csvqb_pipelines[*pipeline_index].len() <= index {
                                                         self.csvqb_pipelines[*pipeline_index].push((index, Vec::new()));
                                                     }
@@ -1069,7 +1062,7 @@ impl CharterCsvApp {
                                                 ui.label(RichText::new("csv columns".to_string()));
                                                 ui.set_min_size(Vec2::new(ui.available_width() / 3.0, 100.0));
                                                 ScrollArea::vertical()
-                                                    .max_width(ui.available_width() / 3.0)
+                                                    .max_width(ui.available_width() - 20.0)
                                                     .show(ui, |ui| {
                                                         ui.horizontal_wrapped(|ui| {
                                                             for field in fields.iter() {
@@ -1092,6 +1085,7 @@ impl CharterCsvApp {
                                                 ui.set_min_size(Vec2::new(ui.available_width() / 3.0, 100.0));
                                                 ui.set_max_height(25.0);
                                                 ScrollArea::vertical()
+                                                    .max_width(ui.available_width() - 20.0)
                                                     .show(ui, |ui| {
                                                         ui.horizontal_wrapped(|ui| {
                                                             if ui.button("(").clicked() {
@@ -1187,8 +1181,8 @@ impl CharterCsvApp {
                                                         });
                                                     });
                                             });
+                                            ui.separator();
                                         }
-                                        ui.label("─".repeat(50));
                                     }
                                 }
                                 ui.add_space(135.0);
@@ -1196,7 +1190,15 @@ impl CharterCsvApp {
                     });
                 });
 
+
+                let (response, new_x) = custom_divider(ui, self.divider_position);
+                if response.dragged() {
+                    self.divider_position = new_x;
+                }
+
+
                 ui.vertical_centered_justified(|ui| {
+
                     ui.heading(RichText::new("Pipeline output").color(Color32::BLACK));
                     let expression_data = &self.graph_data;
                     ScrollArea::vertical()

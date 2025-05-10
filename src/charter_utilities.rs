@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText, ScrollArea, Vec2, TextEdit, Sense, CursorIcon, StrokeKind};
+use egui::{UserData, emath, pos2, vec2, Color32, FontId, Id, Painter, Pos2, Rect, Shape, Stroke, WidgetText, ScrollArea, Vec2, TextEdit, Sense, CursorIcon, StrokeKind, Ui, Response};
 use egui::epaint::TextShape;
 use crate::charter_csv::PlotPoint;
 use crate::csvqb::CIR;
@@ -791,4 +791,45 @@ pub fn render_db_stats(ui: &mut egui::Ui, conn: &rusqlite::Connection) -> Result
     }
 
     Ok(())
+}
+
+pub fn custom_divider(ui: &mut Ui, divider_x: f32) -> (Response, f32) {
+    const FRAME_WIDTH: f32 = 12.0;
+
+    let frame_rect = {
+        Rect::from_min_max(
+            pos2(divider_x + 35.0, ui.min_rect().min.y),
+            pos2(divider_x + 35.0 + FRAME_WIDTH, ui.min_rect().max.y),
+        )
+    };
+
+    let id = ui.make_persistent_id("custom_divider");
+    let layer_id = egui::LayerId::new(egui::Order::Foreground, id);
+
+    let response = ui.interact(
+        frame_rect,
+        id,
+        Sense::drag(),
+    );
+
+    let mut new_x = divider_x;
+    if response.dragged() {
+        new_x += response.drag_delta().x;
+
+        new_x = new_x.clamp(350.0, ui.available_width() + 350.0);
+    }
+
+    if ui.is_rect_visible(frame_rect) {
+        let painter = ui.ctx().layer_painter(layer_id);
+        let color = if response.is_pointer_button_down_on() {
+            Color32::DARK_GRAY
+        } else if response.hovered() {
+            Color32::GRAY
+        } else {
+            Color32::BLACK
+        };
+        painter.rect_filled(frame_rect, 0.0, color);
+    }
+
+    (response, new_x)
 }
