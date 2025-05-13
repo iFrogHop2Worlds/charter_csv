@@ -5,7 +5,7 @@ use crate::csvqb::{csvqb_to_cir, CIR};
 use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager, };
 use crate::session::{load_session_files_from_db, load_sessions_from_db, reconstruct_session, retrieve_session_list, save_session_to_database, update_current_session, Session};
 use eframe::App;
-use egui::{Align, Button, CentralPanel, Color32, Context, FontId, Frame, IconData, Id, Image, Margin, Order, RichText, ScrollArea, Stroke, TextEdit, TextureHandle, Ui, Vec2, Window};
+use egui::{emath, vec2, Align, Align2, Button, CentralPanel, Color32, Context, FontId, Frame, IconData, Id, Image, LayerId, Margin, Order, PointerButton, Pos2, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TextureHandle, Ui, Vec2, Window};
 use image::ImageReader;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -16,7 +16,8 @@ pub use std::thread;
 use std::time::Instant;
 use rayon::prelude::*;
 use crate::components::optimized_load_csv_button::CsvLoaderButton;
-
+use egui::emath::Rot2 as Rotation2D;
+use egui::epaint::TextShape;
 
 // Application is still in early development App state is scheduled for a refactor soon.
 pub struct CharterCsvApp {
@@ -91,7 +92,7 @@ impl Default for CharterCsvApp {
             edit_ss_name: "".to_string(),
             time_to_hide_state: None,
             labels: Vec::new(),
-            next_label_id: 0,
+            next_label_id: 1,
             show_labels: true,
             chart_view_editing: false,
             search_text: "".to_string(),
@@ -1234,6 +1235,8 @@ impl CharterCsvApp {
             .fill(Color32::from_rgb(193, 200, 208));
 
         let mut indices_to_remove: Vec<usize> = Vec::new();
+        let mut labels_to_remove: Vec<usize> = Vec::new();
+
         CentralPanel::default().frame(frame).show(ctx, |ui| {
             Frame::NONE
                 .fill(Color32::from_rgb(193, 200, 208))
@@ -1257,6 +1260,8 @@ impl CharterCsvApp {
                                     text: String::new(),
                                     pos: ui.cursor().left_top(),
                                     id: self.next_label_id,
+                                    drag_start: None,
+                                    rotation: 0.0,
                                 };
                                 self.labels.push(new_label);
                                 self.next_label_id += 1;
@@ -1268,6 +1273,67 @@ impl CharterCsvApp {
                 });
 
             ui.add_space(21.0);
+
+            if !self.labels.is_empty() {
+                for (index, label) in self.labels.iter_mut().enumerate() {
+                    let label_id = Id::new(format!("label_{}", label.id));
+                    let mut stroke = Stroke::NONE;
+
+                    if self.chart_view_editing {
+                        stroke = Stroke::new(1.0, Color32::BLACK);
+                    }
+
+                    if let Some(response) = Window::new(format!("window_{}", label.id))
+                        .id(label_id)
+                        .title_bar(false)
+                        .resizable(false)
+                        .movable(false)  // this conflix with sense drag when true but I need this to be true hmmm
+                        .constrain(true)
+                        .max_height(40.0)
+                        .order(Order::Foreground)
+                        .current_pos(label.pos)
+                        .frame(Frame {
+                            inner_margin: Margin::same(0.0 as i8),
+                            outer_margin: Margin::same(0.0 as i8),
+                            shadow: egui::Shadow::NONE,
+                            fill: Color32::TRANSPARENT,
+                            stroke,
+                            corner_radius: Default::default(),
+                        })
+                        .show(ctx, |ui| {
+                            ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
+                                ui.label(&label.text);
+
+                                if self.chart_view_editing {
+                                    let response = ui.text_edit_singleline(&mut label.text);
+                                    response.changed();
+
+                                    if ui.button("❌").clicked() {
+                                        labels_to_remove.push(index);
+                                    }
+
+                                    let rot_btn = ui.add(Button::new("↻").sense(Sense::drag()));
+
+                                    if rot_btn.drag_started() {
+                                        println!("Drag started for label {}", label.id);
+                                    }
+                                    if rot_btn.dragged() {
+                                        println!("Dragging label {}", label.id);
+                                        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                                            println!("Drag position: {:?}", pos);
+                                        }
+                                    }
+                                    if rot_btn.drag_released() {
+                                        println!("Drag ended for label {}", label.id);
+                                    }
+                                }
+                            })
+                        })
+                    {
+                        label.pos = response.response.rect.left_top();
+                    }
+                }
+            }
 
             ScrollArea::both().show(ui, |ui| {
                 for (index, graph_query) in self.graph_data.iter().enumerate() {
@@ -1304,48 +1370,7 @@ impl CharterCsvApp {
                                 .fill(ui.style().visuals.window_fill())
                                 .inner_margin(Margin::symmetric(20.0 as i8, 20.0 as i8))
                                 .show(ui, |ui| {
-                                    if index < self.labels.len() {
-                                        let label = &mut self.labels[index];
-                                        let label_id = Id::new(format!("label_{}", label.id));
 
-                                        if let Some(response) = Window::new(&label.text)
-                                            .id(label_id)
-                                            .title_bar(false)
-                                            .resizable(true)
-                                            .movable(true)
-                                            .constrain(true)
-                                            .max_height(40.0)
-                                            .order(Order::Foreground)
-                                            .current_pos(label.pos)
-                                            .frame(Frame {
-                                                inner_margin: Margin::same(0.0 as i8),
-                                                outer_margin: Margin::same(0.0 as i8),
-                                                shadow: egui::Shadow::NONE,
-                                                fill: Color32::TRANSPARENT,
-                                                stroke: Stroke::NONE,
-                                                corner_radius: Default::default(),
-                                            })
-                                            .collapsible(true)
-                                            .show(ctx, |ui| {
-                                                ui.with_layout(egui::Layout::top_down(Align::LEFT), |ui| {
-                                                    ui.horizontal(|ui| {
-                                                        let label_response = ui.label(&label.text);
-                                                        if label_response.clicked() {
-                                                            println!("maybe do something with clicks?");
-                                                        }
-                                                    });
-                                                    if self.chart_view_editing {
-                                                        ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
-                                                            let response = ui.text_edit_singleline(&mut label.text);
-                                                            response.changed()
-                                                        });
-                                                    }
-                                                })
-                                            })
-                                        {
-                                            label.pos = response.response.rect.left_top();
-                                        }
-                                    }
                                     match &graph_query[0] {
                                         CIR::Field(graph_type) if graph_type == "Bar Graph" => {
                                             let _ = draw_bar_graph(ui, formatted_data);
@@ -1367,14 +1392,20 @@ impl CharterCsvApp {
                                         }
                                         _ => {}
                                     }
+
                                 });
                         });
                 }
             });
         });
 
+
+        // cleanup items tagged for removal
         for &index in indices_to_remove.iter().rev() {
             self.graph_data.remove(index);
+        }
+        for &index in labels_to_remove.iter().rev() {
+            self.labels.remove(index);
         }
     }
 

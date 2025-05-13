@@ -11,6 +11,8 @@ pub struct DraggableLabel {
     pub text: String,
     pub pos: Pos2,
     pub id: u32,
+    pub drag_start: Option<Pos2>,
+    pub rotation: f32,
 }
 
 #[derive(Debug)]
