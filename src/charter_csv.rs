@@ -1287,9 +1287,9 @@ impl CharterCsvApp {
                         .id(label_id)
                         .title_bar(false)
                         .resizable(false)
-                        .movable(false)  // this conflix with sense drag when true but I need this to be true hmmm
+                        .movable(true)
                         .constrain(true)
-                        .max_height(40.0)
+                        .max_height(220.0)
                         .order(Order::Foreground)
                         .current_pos(label.pos)
                         .frame(Frame {
@@ -1301,9 +1301,7 @@ impl CharterCsvApp {
                             corner_radius: Default::default(),
                         })
                         .show(ctx, |ui| {
-                            ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
-                                ui.label(&label.text);
-
+                            ui.with_layout(egui::Layout::left_to_right(Align::BOTTOM), |ui| {
                                 if self.chart_view_editing {
                                     let response = ui.text_edit_singleline(&mut label.text);
                                     response.changed();
@@ -1315,18 +1313,43 @@ impl CharterCsvApp {
                                     let rot_btn = ui.add(Button::new("↻").sense(Sense::drag()));
 
                                     if rot_btn.drag_started() {
-                                        println!("Drag started for label {}", label.id);
+                                        label.drag_start = Some(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
                                     }
                                     if rot_btn.dragged() {
-                                        println!("Dragging label {}", label.id);
-                                        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                                            println!("Drag position: {:?}", pos);
+                                        if let Some(start_pos) = label.drag_start {
+                                            let current_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+                                            let delta = current_pos - start_pos;
+
+                                            let rotation_speed = 0.5;
+                                            label.rotation += delta.x * rotation_speed;
+
+                                            label.drag_start = Some(current_pos);
                                         }
                                     }
                                     if rot_btn.drag_released() {
-                                        println!("Drag ended for label {}", label.id);
+                                        label.drag_start = None;
                                     }
                                 }
+
+                                let painter = ui.painter();
+                                let galley = painter.layout_no_wrap(
+                                    label.text.clone(),
+                                    FontId::proportional(12.0),
+                                    ui.style().visuals.text_color(),
+                                );
+
+                                let rotation_angle = (label.rotation * std::f32::consts::PI) / 180.0;
+                                let center = ui.min_rect().center();
+
+                                painter.add(Shape::Text(TextShape {
+                                    pos: center - vec2(0.0, 100.0),
+                                    galley,
+                                    angle: rotation_angle,
+                                    underline: Stroke::NONE,
+                                    fallback_color: ui.style().visuals.text_color(),
+                                    override_text_color: None,
+                                    opacity_factor: 1.0,
+                                }));
                             })
                         })
                     {
