@@ -5,7 +5,7 @@ use crate::csvqb::{csvqb_to_cir, CIR};
 use crate::db_manager::{DatabaseConfig, DatabaseSource, DatabaseType, DbManager, };
 use crate::session::{load_session_files_from_db, load_sessions_from_db, reconstruct_session, retrieve_session_list, save_session_to_database, update_current_session, Session};
 use eframe::App;
-use egui::{emath, vec2, Align, Align2, Button, CentralPanel, Color32, Context, FontId, Frame, IconData, Id, Image, LayerId, Margin, Order, PointerButton, Pos2, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TextureHandle, Ui, Vec2, Window};
+use egui::{Align, Button, CentralPanel, Color32, Context, FontId, Frame, IconData, Id, Image, LayerId, Margin, Order, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TextureHandle, Ui, Vec2, Window};
 use image::ImageReader;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -16,7 +16,6 @@ pub use std::thread;
 use std::time::Instant;
 use rayon::prelude::*;
 use crate::components::optimized_load_csv_button::CsvLoaderButton;
-use egui::emath::Rot2 as Rotation2D;
 use egui::epaint::TextShape;
 
 // Application is still in early development App state is scheduled for a refactor soon.
@@ -1262,6 +1261,7 @@ impl CharterCsvApp {
                                     id: self.next_label_id,
                                     drag_start: None,
                                     rotation: 0.0,
+                                    needs_focus: true,
                                 };
                                 self.labels.push(new_label);
                                 self.next_label_id += 1;
@@ -1277,11 +1277,11 @@ impl CharterCsvApp {
             if !self.labels.is_empty() {
                 for (index, label) in self.labels.iter_mut().enumerate() {
                     let label_id = Id::new(format!("label_{}", label.id));
-                    let mut stroke = Stroke::NONE;
-
-                    if self.chart_view_editing {
-                        stroke = Stroke::new(1.0, Color32::BLACK);
-                    }
+                    // let mut stroke = Stroke::NONE;
+                    //
+                    // if self.chart_view_editing {
+                    //     Stroke::new(0.2, Color32::BLACK).stroke_bottom()
+                    // }
 
                     if let Some(response) = Window::new(format!("window_{}", label.id))
                         .id(label_id)
@@ -1289,7 +1289,7 @@ impl CharterCsvApp {
                         .resizable(false)
                         .movable(true)
                         .constrain(true)
-                        .max_height(220.0)
+                        .max_height(0.0)
                         .order(Order::Foreground)
                         .current_pos(label.pos)
                         .frame(Frame {
@@ -1297,20 +1297,38 @@ impl CharterCsvApp {
                             outer_margin: Margin::same(0.0 as i8),
                             shadow: egui::Shadow::NONE,
                             fill: Color32::TRANSPARENT,
-                            stroke,
+                            stroke: Stroke::NONE,
                             corner_radius: Default::default(),
                         })
                         .show(ctx, |ui| {
-                            ui.with_layout(egui::Layout::left_to_right(Align::BOTTOM), |ui| {
+                            ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
                                 if self.chart_view_editing {
-                                    let response = ui.text_edit_singleline(&mut label.text);
+
+
+                                    let response = ui.add(
+                                        TextEdit::singleline(&mut label.text)
+                                            .frame(false)
+                                            .text_color(Color32::TRANSPARENT)
+                                            .background_color(Color32::from_rgb(255, 239, 135))
+                                    );
+
+                                    if label.needs_focus {
+                                        response.request_focus();
+                                        label.needs_focus = false;
+                                    }
+
                                     response.changed();
+
+                                    let rot_btn = ui.add(Button::new("↻").sense(Sense::drag()));
 
                                     if ui.button("❌").clicked() {
                                         labels_to_remove.push(index);
                                     }
 
-                                    let rot_btn = ui.add(Button::new("↻").sense(Sense::drag()));
+
+                                    if ui.add(Button::new("").min_size(Vec2::new(16.0, 16.0))).clicked() {}
+
+
 
                                     if rot_btn.drag_started() {
                                         label.drag_start = Some(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
@@ -1339,14 +1357,20 @@ impl CharterCsvApp {
                                 );
 
                                 let rotation_angle = (label.rotation * std::f32::consts::PI) / 180.0;
-                                let center = ui.min_rect().center();
+                                let position = ui.min_rect().left_center();
 
+                                let layer_id = LayerId::new(Order::Foreground, Id::new("text_overlay"));
+                                let painter = ctx.layer_painter(layer_id);
+                                let mut y_offset = 0.0;
+                                if self.chart_view_editing {
+                                   y_offset = 9.0;
+                                }
                                 painter.add(Shape::Text(TextShape {
-                                    pos: center - vec2(0.0, 100.0),
+                                    pos: position - Vec2::new(0.0, y_offset),
                                     galley,
                                     angle: rotation_angle,
                                     underline: Stroke::NONE,
-                                    fallback_color: ui.style().visuals.text_color(),
+                                    fallback_color: ui.visuals().text_color(),
                                     override_text_color: None,
                                     opacity_factor: 1.0,
                                 }));

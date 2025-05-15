@@ -13,6 +13,7 @@ pub struct DraggableLabel {
     pub id: u32,
     pub drag_start: Option<Pos2>,
     pub rotation: f32,
+    pub(crate) needs_focus: bool,
 }
 
 #[derive(Debug)]
